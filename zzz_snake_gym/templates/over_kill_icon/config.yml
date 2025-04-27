@@ -1,0 +1,8 @@
+sub_dir: game_snake
+template_id: over_kill_icon
+template_name: 蛇对蛇-结束-蛇数
+template_shape: rectangle
+auto_mask: true
+point_list:
+- 1144, 484
+- 1185, 522

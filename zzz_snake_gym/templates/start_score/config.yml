@@ -1,0 +1,8 @@
+sub_dir: game_snake
+template_id: start_score
+template_name: 蛇对蛇-开始-分数标题
+template_shape: rectangle
+auto_mask: true
+point_list:
+- 504, 58
+- 720, 114

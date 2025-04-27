@@ -1,0 +1,6 @@
+# development
+.install/
+.debug/
+.log/
+.venv/
+.idea/
