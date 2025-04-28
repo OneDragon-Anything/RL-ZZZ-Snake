@@ -11,7 +11,7 @@ from stable_baselines3.common.vec_env import VecFrameStack
 from zzz_snake_gym import os_utils
 from zzz_snake_gym.env import ZzzSnakeEnv
 from zzz_snake_rl import train_utils
-from zzz_snake_rl.env_utils import ENV_N_STACK
+from zzz_snake_rl.env_utils import ENV_N_STACK, TRAIN_BUFFER_SIZE, TRAIN_BATCH_SIZE, TRAIN_SAVE_GAME_RECORD
 
 # 设置参数
 TOTAL_TIMESTEPS = 100000  # 总训练步数
@@ -30,7 +30,7 @@ load_dotenv(
 
 def normal_env():
     return ZzzSnakeEnv(
-        save_game_record=os.getenv('TRAIN_SAVE_GAME_RECORD') == '1',
+        save_game_record=TRAIN_SAVE_GAME_RECORD,
         game_record_dir=os_utils.get_path_under_workspace_dir(['.debug', 'game_record'])
     )
 
@@ -58,7 +58,8 @@ def train():
         'MultiInputPolicy',
         env,
         verbose=1,
-        buffer_size=int(os.getenv('TRAIN_REPLAY_BUFF_SIZE', 1000)),
+        buffer_size=TRAIN_BUFFER_SIZE,
+        batch_size=TRAIN_BATCH_SIZE,
         tensorboard_log=train_utils.get_tensorboard_log_dir(),
         train_freq=(1, 'episode'),
         gradient_steps=10,

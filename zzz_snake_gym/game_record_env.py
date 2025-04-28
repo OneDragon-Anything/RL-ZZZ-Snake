@@ -8,6 +8,7 @@ from gymnasium.core import ObsType
 
 from zzz_snake_gym import cv2_utils, os_utils
 from zzz_snake_gym.env import ZzzSnakeEnv
+from zzz_snake_gym.snake_analyzer import ZzzSnakeGameInfo
 
 
 class GameRecordLoader:
@@ -27,11 +28,15 @@ class GameRecordLoader:
 
         self.total_step: int = 0  # 所有episode的总step数
         self.episode_list: list[str] = []  # 预录制目录下 所有的episode目录
-        self.episode_idx: int = 0  # 当前episode下标
-        self.step_idx: int = 1  # 当前episode的step下标
+        self.episode_idx: int = -1  # 当前episode下标
+        self.step_idx: int = 0  # 当前episode的step下标
 
         self.next_screenshot: Optional[MatLike] = None
         self.next_data: Optional[dict] = None
+        self.next_episode_end: bool = False
+        self.is_last_episode: bool = False
+
+        self.load_data()
 
     def load_data(self) -> None:
         """
@@ -41,11 +46,12 @@ class GameRecordLoader:
         """
         for episode_name in os.listdir(self.game_record_dir):
             episode_path = os.path.join(self.game_record_dir, episode_name)
-            if os.ispath.isdir(episode_path):
+            if os.path.isdir(episode_path):
                 self.episode_list.append(episode_path)
-                self.total_step += len(os.listdir(episode_path))
+                self.total_step += len(os.listdir(episode_path)) // 2
 
-        self.total_step = self.total_step // 2  # png和json各一个
+        self.total_step -= 1  # 减1是最开始reset的时候会取掉第一帧画面
+
         print(f'总共: {len(self.episode_list)} 个episode, {self.total_step} 个step')
 
     def next_episode(self) -> None:
@@ -55,7 +61,11 @@ class GameRecordLoader:
             None
         """
         self.episode_idx += 1
-        self.step_idx = 1
+        self.step_idx = 0
+        episode_name = self.episode_list[self.episode_idx] if self.episode_idx < len(self.episode_list) else None
+        print(f'进入下一个episode {episode_name}')
+
+        self.is_last_episode = self.episode_idx >= len(self.episode_list) - 1
 
     def next_step(self) -> None:
         """
@@ -63,15 +73,21 @@ class GameRecordLoader:
         Returns:
             None
         """
-        screenshot_path = os.path.join(self.episode_list[self.episode_idx], f'{self.step_idx}.png')
-        json_path = os.path.join(self.episode_list[self.episode_idx], f'{self.step_idx}.json')
+        episode_name = self.episode_list[self.episode_idx]
         self.step_idx += 1
+        print(f'进入下一个step {episode_name} {self.step_idx}')
+
+        screenshot_path = os.path.join(episode_name, f'{self.step_idx}.png')
+        json_path = os.path.join(episode_name, f'{self.step_idx}.json')
         if not os.path.exists(screenshot_path) or not os.path.exists(json_path):
             self.next_screenshot = None
             self.next_data = None
         else:
             self.next_screenshot = cv2_utils.read_image(screenshot_path)
             self.next_data = os_utils.read_json(json_path)
+
+        next_screenshot_path = os.path.join(episode_name, f'{self.step_idx + 1}.png')
+        self.next_episode_end = not os.path.exists(next_screenshot_path)
 
 
 class ZzzSnakeGameRecordEnv(ZzzSnakeEnv):
@@ -82,7 +98,7 @@ class ZzzSnakeGameRecordEnv(ZzzSnakeEnv):
 
     def __init__(
             self,
-            record_loader: GameRecordLoader
+            record_loader: Optional[GameRecordLoader] = None
     ):
         """
 
@@ -104,12 +120,28 @@ class ZzzSnakeGameRecordEnv(ZzzSnakeEnv):
         # 加载下一帧画面
         self.record_loader.next_step()
         screenshot = self.record_loader.next_screenshot
-        screenshot_time = self.record_loader.next_data.get('screenshot_time')
-        if screenshot_time is None:
-            screenshot_time = time.time()
+        if screenshot is None:
+            game_info = ZzzSnakeGameInfo(
+                start_time=self.last_info.start_time,
+                current_time=self.last_info.current_time,
+                screenshot=self.last_info.screenshot,
+                game_part=self.last_info.game_part,
+                hsv_game_part=self.last_info.hsv_game_part,
 
-        # 继续原来的逻辑
-        game_info = self.analyzer.analyse(screenshot, screenshot_time, self.last_info)
+                score=self.last_info.score,
+                game_over=True,
+                head=self.last_info.head,
+                grid=self.last_info.grid,
+                can_go_grid_list=self.last_info.can_go_grid_list,
+                total_reward_cnt=self.last_info.total_reward_cnt,
+            )
+        else:
+            screenshot_time = self.record_loader.next_data.get('screenshot_time')
+            if screenshot_time is None:
+                screenshot_time = time.time()
+
+            # 继续原来的逻辑
+            game_info = self.analyzer.analyse(screenshot, screenshot_time, self.last_info)
         return ZzzSnakeEnv.step_with_info(self, game_info)
 
     def reset(

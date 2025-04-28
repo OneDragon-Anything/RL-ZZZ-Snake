@@ -175,13 +175,7 @@ class ZzzSnakeEnv(gym.Env):
             处理后的观察空间
         """
         if info.game_over:
-            return {
-                'image': np.zeros(self.observation_space['image'].shape, dtype=np.uint8),
-                'grid': np.zeros(self.observation_space['grid'].shape, dtype=np.uint8),
-                'last_action': np.zeros(self.observation_space['last_action'].shape, dtype=np.uint8),
-                'feat_direction_cnt': np.zeros(self.observation_space['feat_direction_cnt'].shape, dtype=np.float32),
-                'feat_distance': np.zeros(self.observation_space['feat_distance'].shape, dtype=np.float32),
-            }
+            return self.game_over_obs()
 
         game_part = cv2.resize(info.game_part, self.target_size, interpolation=cv2.INTER_AREA)
         mask_shape = game_part.shape[:2]
@@ -236,6 +230,20 @@ class ZzzSnakeEnv(gym.Env):
             ], dtype=np.float32),
         }
 
+    def game_over_obs(self) -> dict:
+        """
+        游戏结束的观察空间
+        Returns:
+
+        """
+        return {
+            'image': np.zeros(self.observation_space['image'].shape, dtype=np.uint8),
+            'grid': np.zeros(self.observation_space['grid'].shape, dtype=np.uint8),
+            'last_action': np.zeros(self.observation_space['last_action'].shape, dtype=np.uint8),
+            'feat_direction_cnt': np.zeros(self.observation_space['feat_direction_cnt'].shape, dtype=np.float32),
+            'feat_distance': np.zeros(self.observation_space['feat_distance'].shape, dtype=np.float32),
+        }
+
     def step(
             self,
             action
@@ -287,7 +295,8 @@ class ZzzSnakeEnv(gym.Env):
         truncated = False
         # 判断奖励
         reward = self._get_reward(info)
-        print(f'上一个: 时间: {self.last_info.current_time - self.last_info.start_time:.4f} 坐标: {self.last_info.head} 动作: {self.last_info.direction} 奖励: {reward:.2f} 预测坐标: {self.last_info.predict_head}')
+        print(f'上一个: 时间: {self.last_info.current_time - self.last_info.start_time:.4f} 动作: {self.last_info.direction} 修正动作: {self.last_info.real_direction}')
+        print(f'上一个: 坐标: {self.last_info.head} 预测坐标: {self.last_info.predict_head} 奖励: {reward:.2f}')
         print(f'当前: 时间: {info.current_time - info.start_time:.4f} 坐标: {info.head}')
         # 记录游戏信息
         self.last_info_2 = self.last_info
@@ -321,6 +330,7 @@ class ZzzSnakeEnv(gym.Env):
         existed_summary_screen: bool = False
         # 重新开始游戏
         while True:
+            self.screen_capturer.active_window()
             current_time: float = time.time()
             screenshot = self.screen_capturer.get_screenshot()
 
