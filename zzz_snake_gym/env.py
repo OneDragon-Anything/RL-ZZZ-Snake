@@ -1,6 +1,6 @@
 import os
 import time
-from typing import SupportsFloat, Any
+from typing import SupportsFloat, Any, Optional
 
 import cv2
 import gymnasium as gym
@@ -20,16 +20,19 @@ from zzz_snake_gym.snake_analyzer import ZzzSnakeAnalyzer, ZzzSnakeGameInfo
 
 class ZzzSnakeEnv(gym.Env):
 
-    def __init__(self,
-                 win_title: str = '绝区零',
-                 screen_capturer: ZzzSnakeScreenCapturer = None,
-                 controller: ZzzSnakeController = None,
-                 save_replay: bool = False,
-                 scale: int = 8,
-                 ):
+    def __init__(
+            self,
+            win_title: str = '绝区零',
+            screen_capturer: ZzzSnakeScreenCapturer = None,
+            controller: ZzzSnakeController = None,
+            scale: int = 8,
+            save_replay: bool = False,
+            save_replay_dir: str = None,
+    ):
         gym.Env.__init__(self)
 
-        self.save_replay: bool = save_replay  # 是否保存数据用于离线训练
+        self.save_replay: bool = save_replay and save_replay_dir is not None  # 是否保存数据用于离线训练
+        self.save_replay_dir: str = save_replay_dir  # 保存数据的目录
         self.save_idx: int = 0  # 保存数据的下标
 
         # 定义观察空间
@@ -43,11 +46,13 @@ class ZzzSnakeEnv(gym.Env):
 
         grid_types = len(game_const.GridType)
         self.observation_space: spaces.Dict = spaces.Dict({
-            'image': spaces.Box(low=0, high=255, shape=(self.target_size[1], self.target_size[0], 3+grid_types), dtype=np.uint8),
-            'grid': spaces.Box(low=0, high=1, shape=(game_const.GRID_ROWS, game_const.GRID_COLS, grid_types), dtype=np.uint8),
-            'feat_direction_cnt': spaces.Box(low=0, high=1, shape=(16, ), dtype=np.float32),  # 朝4个方向移动 预估可遇到的各类型数量
-            'feat_distance': spaces.Box(low=-1, high=1, shape=(4, ), dtype=np.float32),  # 与各类型目标点的距离偏移量
-            'last_action': spaces.Box(low=0, high=1, shape=(4,),dtype=np.uint8),
+            'image': spaces.Box(low=0, high=255, shape=(self.target_size[1], self.target_size[0], 3 + grid_types),
+                                dtype=np.uint8),
+            'grid': spaces.Box(low=0, high=1, shape=(game_const.GRID_ROWS, game_const.GRID_COLS, grid_types),
+                               dtype=np.uint8),
+            'feat_direction_cnt': spaces.Box(low=0, high=1, shape=(16,), dtype=np.float32),  # 朝4个方向移动 预估可遇到的各类型数量
+            'feat_distance': spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32),  # 与各类型目标点的距离偏移量
+            'last_action': spaces.Box(low=0, high=1, shape=(4,), dtype=np.uint8),
         })
 
         # 定义动作空间
@@ -55,7 +60,8 @@ class ZzzSnakeEnv(gym.Env):
         self.action_space = spaces.Discrete(4)
 
         # 截图器 返回游戏画面的截图 RGB格式
-        self.screen_capturer: ZzzSnakeScreenCapturer = DefaultZzzSnakeScreenCapturer(win_title=win_title) if screen_capturer is None else screen_capturer
+        self.screen_capturer: ZzzSnakeScreenCapturer = DefaultZzzSnakeScreenCapturer(
+            win_title=win_title) if screen_capturer is None else screen_capturer
 
         # 控制器
         self.controller: ZzzSnakeController = KeyMouseZzzSnakeController() if controller is None else controller
@@ -64,11 +70,16 @@ class ZzzSnakeEnv(gym.Env):
         self.analyzer: ZzzSnakeAnalyzer = ZzzSnakeAnalyzer((original_height, original_width))
 
         # 上一帧的游戏信息
-        self.last_info: ZzzSnakeGameInfo = None
+        self.last_info: Optional[ZzzSnakeGameInfo] = None
         # 上上一帧的游戏信息
-        self.last_info_2: ZzzSnakeGameInfo = None
+        self.last_info_2: Optional[ZzzSnakeGameInfo] = None
 
-    def get_init_game_info(self, current_time: float, screenshot: MatLike, last_info: ZzzSnakeGameInfo) -> ZzzSnakeGameInfo:
+    def get_init_game_info(
+            self,
+            current_time: float,
+            screenshot: MatLike,
+            last_info: Optional[ZzzSnakeGameInfo]
+    ) -> ZzzSnakeGameInfo:
         """
         初始化游戏信息
         Returns:
@@ -316,19 +327,28 @@ class ZzzSnakeEnv(gym.Env):
             time.sleep(1)
 
     def _do_save_replay(self) -> None:
-        if self.save_replay:
-            self.save_idx += 1
-            to_save_dir = os_utils.get_path_under_workspace_dir(
-                ['.debug', 'env_replay', self.last_info.game_round, str(self.save_idx)])
+        if not self.save_replay:
+            return
+        self.save_idx += 1
 
-            screenshot_path = os.path.join(to_save_dir, 'screenshot.png')
-            cv2_utils.save_image(self.last_info.screenshot, screenshot_path)
+        to_save_dir = os.path.join(self.save_replay_dir, self.last_info.game_round)
+        if not os.path.exists(to_save_dir):
+            os.mkdir(to_save_dir)
 
-            info_path = os.path.join(to_save_dir, 'info.json')
-            info = {
-                'direction': int(self.last_info.direction)
-            }
-            os_utils.save_json(info, info_path)
+        screenshot_path = os.path.join(to_save_dir, f'{self.save_idx}.png')
+        cv2_utils.save_image(self.last_info.screenshot, screenshot_path)
+
+        info_path = os.path.join(to_save_dir, f'{self.save_idx}.json')
+        info = {
+            'direction': int(self.last_info.direction)
+        }
+        os_utils.save_json(info, info_path)
+
+
+class ZzzSnakeReplayEnv(ZzzSnakeEnv):
+
+    def __init__(self):
+        pass
 
 
 def get_mask_by_grid_type_2(shape: tuple[int, int], grid: list[list[int]], grid_type: int) -> np.ndarray:
@@ -382,7 +402,6 @@ def get_mask_by_grid_type(shape: tuple[int, int], grid: NDArray[np.uint8], grid_
         mask[start_y:end_y, start_x:end_x] = 255
 
     return mask
-
 
 
 def get_one_hot_grid(grid: NDArray[np.uint8]) -> NDArray[np.uint8]:

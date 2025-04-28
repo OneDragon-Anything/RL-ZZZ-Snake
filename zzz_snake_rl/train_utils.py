@@ -93,8 +93,3 @@ def get_sb3_model_save_dir():
         sb3的模型保存目录位置
     """
     return get_path_under_workspace_dir(['.log', 'sb3', 'model'])
-
-
-def make_env():
-    env = ZzzSnakeEnv()
-    return env
