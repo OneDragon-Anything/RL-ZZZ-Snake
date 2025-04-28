@@ -20,19 +20,23 @@ from zzz_snake_gym.snake_analyzer import ZzzSnakeAnalyzer, ZzzSnakeGameInfo
 
 class ZzzSnakeEnv(gym.Env):
 
+    """
+    基于gym标准接口封装的绝区零蛇吃蛇环境
+    """
+
     def __init__(
             self,
             win_title: str = '绝区零',
             screen_capturer: ZzzSnakeScreenCapturer = None,
             controller: ZzzSnakeController = None,
             scale: int = 8,
-            save_replay: bool = False,
-            save_replay_dir: str = None,
+            save_game_record: bool = False,
+            game_record_dir: str = None,
     ):
         gym.Env.__init__(self)
 
-        self.save_replay: bool = save_replay and save_replay_dir is not None  # 是否保存数据用于离线训练
-        self.save_replay_dir: str = save_replay_dir  # 保存数据的目录
+        self.save_game_record: bool = save_game_record and game_record_dir is not None  # 是否保存数据用于离线训练
+        self.game_record_dir: str = game_record_dir  # 保存数据的目录
         self.save_idx: int = 0  # 保存数据的下标
 
         # 定义观察空间
@@ -149,6 +153,16 @@ class ZzzSnakeEnv(gym.Env):
 
     def _take_action(self, direction: int):
         self.controller.move(direction)
+
+    def update_by_action(self, direction: int):
+        """
+        根据动作更新信息
+        Args:
+            direction: 动作方向
+
+        Returns:
+
+        """
         self.last_info.set_direction(direction, self.last_info_2)
 
     def get_obs(self, info: ZzzSnakeGameInfo) -> dict:
@@ -236,7 +250,8 @@ class ZzzSnakeEnv(gym.Env):
         """
         # 执行动作
         self._take_action(action)
-        self._do_save_replay()
+        self.update_by_action(action)
+        self._do_save_game_record()
 
         # 循环等待位置发生变化
         while True:
@@ -259,6 +274,11 @@ class ZzzSnakeEnv(gym.Env):
             self.screen_capturer.active_window()
             time.sleep(0.01)
 
+        return self.step_with_info(info)
+
+    def step_with_info(
+            self, info: ZzzSnakeGameInfo
+    ) -> tuple[ObsType, SupportsFloat, bool, bool, dict[str, Any]]:
         # 观察空间
         obs = self.get_obs(info)
         # 判断游戏结束
@@ -310,14 +330,7 @@ class ZzzSnakeEnv(gym.Env):
                 if need_summary_screen and not existed_summary_screen:
                     pass
                 else:
-                    # 上一帧的游戏信息
-                    self.last_info = self.get_init_game_info(current_time, screenshot=screenshot, last_info=None)
-                    # 上上一帧的游戏信息
-                    self.last_info_2 = self.get_init_game_info(current_time, screenshot=screenshot, last_info=self.last_info)
-
-                    obs = self.get_obs(self.last_info)
-                    self.save_idx = 0
-                    return obs, {'0': self.last_info}
+                    return self.reset_result(screenshot, current_time)
             else:
                 is_summary = game_utils.is_game_over_summary_screen(screenshot)
                 existed_summary_screen = existed_summary_screen | is_summary
@@ -326,12 +339,35 @@ class ZzzSnakeEnv(gym.Env):
 
             time.sleep(1)
 
-    def _do_save_replay(self) -> None:
-        if not self.save_replay:
+    def reset_result(
+            self,
+            screenshot: MatLike,
+            screenshot_time: float,
+    ) -> tuple[ObsType, dict[str, Any]]:
+        """
+
+        Args:
+            screenshot: 游戏画面
+            screenshot_time: 截图时间
+
+        Returns:
+            每局游戏开始时的状态
+        """
+        # 上一帧的游戏信息
+        self.last_info = self.get_init_game_info(screenshot_time, screenshot=screenshot, last_info=None)
+        # 上上一帧的游戏信息
+        self.last_info_2 = self.get_init_game_info(screenshot_time, screenshot=screenshot, last_info=self.last_info)
+
+        obs = self.get_obs(self.last_info)
+        self.save_idx = 0
+        return obs, {'0': self.last_info}
+
+    def _do_save_game_record(self) -> None:
+        if not self.save_game_record:
             return
         self.save_idx += 1
 
-        to_save_dir = os.path.join(self.save_replay_dir, self.last_info.game_round)
+        to_save_dir = os.path.join(self.game_record_dir, self.last_info.game_round)
         if not os.path.exists(to_save_dir):
             os.mkdir(to_save_dir)
 
@@ -340,15 +376,10 @@ class ZzzSnakeEnv(gym.Env):
 
         info_path = os.path.join(to_save_dir, f'{self.save_idx}.json')
         info = {
-            'direction': int(self.last_info.direction)
+            'direction': int(self.last_info.direction),
+            'screenshot_time': self.last_info.current_time,
         }
         os_utils.save_json(info, info_path)
-
-
-class ZzzSnakeReplayEnv(ZzzSnakeEnv):
-
-    def __init__(self):
-        pass
 
 
 def get_mask_by_grid_type_2(shape: tuple[int, int], grid: list[list[int]], grid_type: int) -> np.ndarray:

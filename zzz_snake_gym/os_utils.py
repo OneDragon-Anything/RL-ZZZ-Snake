@@ -44,3 +44,13 @@ def save_json(data: dict, file_path: str) -> None:
     """
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+
+
+def read_json(file_path: str) -> dict:
+    """
+    读取json文件
+    :param file_path: json文件路径
+    :return: json数据
+    """
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return json.load(f)

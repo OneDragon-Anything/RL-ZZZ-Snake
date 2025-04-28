@@ -1,48 +1,50 @@
 import os
-import time
+from typing import Callable
 
-from stable_baselines3 import PPO, DQN, SAC
-from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.callbacks import CheckpointCallback
-from stable_baselines3.common.vec_env import DummyVecEnv, VecFrameStack
-
-from zzz_snake_gym import game_utils, os_utils
-from zzz_snake_gym.controller import ZzzSnakeController, KeyMouseZzzSnakeController
-from zzz_snake_gym.env import ZzzSnakeEnv
-from zzz_snake_gym.screen_capturer import ZzzSnakeScreenCapturer, DefaultZzzSnakeScreenCapturer
-from zzz_snake_rl import train_utils
-
+import gymnasium as gym
 from dotenv import load_dotenv
-from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3 import DQN
+from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.env_util import DummyVecEnv
+from stable_baselines3.common.vec_env import VecFrameStack
+
+from zzz_snake_gym import os_utils
+from zzz_snake_gym.env import ZzzSnakeEnv
+from zzz_snake_rl import train_utils
+from zzz_snake_rl.env_utils import ENV_N_STACK
 
 # 设置参数
 TOTAL_TIMESTEPS = 100000  # 总训练步数
 SAVE_FREQ = 10000  # 每隔多少步保存一次模型
 EVAL_FREQ = 5000  # 每隔多少步评估一次
-N_STACK = 4  # 堆叠的帧数
 
 
 # Load environment variables
-load_dotenv()
-
-
-def make_env():
-    return ZzzSnakeEnv(
-        save_replay=os.getenv('TRAIN_SAVE_REPLAY') == '1',
-        save_replay_dir=os_utils.get_path_under_workspace_dir(['.debug', 'env_replay'])
+load_dotenv(
+    os.path.join(
+        os_utils.get_workspace_dir(),
+        '.env'
     )
+)
+
+
+def normal_env():
+    return ZzzSnakeEnv(
+        save_game_record=os.getenv('TRAIN_SAVE_GAME_RECORD') == '1',
+        game_record_dir=os_utils.get_path_under_workspace_dir(['.debug', 'game_record'])
+    )
+
+
+def make_train_env(env_fn: Callable[[], gym.Env]):
+    # 创建向量化环境
+    env = DummyVecEnv([env_fn])
+    # 帧堆叠
+    return VecFrameStack(env, n_stack=ENV_N_STACK)
 
 
 def train():
-    # 创建向量化环境
-    env = make_vec_env(
-        make_env,
-        n_envs=1,  # 并行环境数
-        vec_env_cls=SubprocVecEnv,  # 多进程并行
-    )
-    # 帧堆叠
-    env = VecFrameStack(env, n_stack=N_STACK)
+    # 创建环境
+    env = make_train_env(normal_env)
 
     # 创建回调函数
     checkpoint_callback = CheckpointCallback(
@@ -52,12 +54,11 @@ def train():
     )
 
     # 创建模型
-    policy = "MultiInputPolicy"
     model = DQN(
-        policy,
+        'MultiInputPolicy',
         env,
         verbose=1,
-        buffer_size=1000,
+        buffer_size=int(os.getenv('TRAIN_REPLAY_BUFF_SIZE', 1000)),
         tensorboard_log=train_utils.get_tensorboard_log_dir(),
         train_freq=(1, 'episode'),
         gradient_steps=10,
