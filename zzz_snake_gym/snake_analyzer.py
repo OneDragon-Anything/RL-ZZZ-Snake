@@ -70,7 +70,7 @@ class ZzzSnakeGameInfo:
 
         # 根据坐标进行的一系列判断
         self.is_towards_boundary: bool = False
-        self.is_predict_danger: bool = False
+        self.is_predict_danger: bool = False  # 预估下一步是否危险 边界/障碍/炸弹
         self.is_predict_reward: bool = False  # 预估下一步到达食物
 
     def set_direction(self, direction: int, last_info: Optional['ZzzSnakeGameInfo']) -> None:
@@ -283,7 +283,8 @@ class ZzzSnakeAnalyzer:
 
         # 使用HSV筛选一些区域mask
         empty_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.EMPTY_HSV_RANGE[0], game_const.EMPTY_HSV_RANGE[1])
-        own_head_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.OWN_HEAD_HSV_RANGE[0], game_const.OWN_HEAD_HSV_RANGE[1])
+        # own_head_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.OWN_HEAD_HSV_RANGE[0], game_const.OWN_HEAD_HSV_RANGE[1])
+        own_head_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.OWN_HEAD_EYE_HSV_RANGE[0], game_const.OWN_HEAD_EYE_HSV_RANGE[1])
         own_body_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.OWN_BODY_HSV_RANGE[0], game_const.OWN_BODY_HSV_RANGE[1])
         blue_head_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.BLUE_HEAD_HSV_RANGE[0], game_const.BLUE_HEAD_HSV_RANGE[1])
         blue_body_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.BLUE_BODY_HSV_RANGE[0], game_const.BLUE_BODY_HSV_RANGE[1])
@@ -295,6 +296,7 @@ class ZzzSnakeAnalyzer:
         green_speed_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.GREEN_SPEED_HSV_RANGE[0], game_const.GREEN_SPEED_HSV_RANGE[1])
         blue_diamond_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.BLUE_DIAMOND_HSV_RANGE[0], game_const.BLUE_DIAMOND_HSV_RANGE[1])
         bomb_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.BOMB_HSV_RANGE[0], game_const.BOMB_HSV_RANGE[1])
+        bomb_future_2 = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.BOMB_HSV_RANGE_2[0], game_const.BOMB_HSV_RANGE_2[1])
 
         empty_mask = empty_future.result()
         own_head_mask = own_head_future.result()
@@ -309,9 +311,12 @@ class ZzzSnakeAnalyzer:
         green_speed_mask = green_speed_future.result()
         blue_diamond_mask = blue_diamond_future.result()
         bomb_mask = bomb_future.result()
+        bomb_mask_2 = bomb_future_2.result()
+        bomb_mask = cv2.bitwise_or(bomb_mask, bomb_mask_2)
 
         empty_future = thread_utils.submit(get_coordinate_by_mask_center, empty_mask, 2, 'avg', 125)
-        own_head_future = thread_utils.submit(get_coordinate_by_mask_center, own_head_mask, 1, 'avg', 255)
+        # own_head_future = thread_utils.submit(get_coordinate_by_mask_center, own_head_mask, 1, 'avg', 255)
+        own_head_future = thread_utils.submit(get_grid_coordinate_by_mask, own_head_mask)
         own_body_future = thread_utils.submit(get_coordinate_by_mask_center, own_body_mask, 2, 'avg', 255)
         blue_head_future = thread_utils.submit(get_coordinate_by_mask_center, blue_head_mask, 2, 'avg', 255)
         blue_body_future = thread_utils.submit(get_coordinate_by_mask_center, blue_body_mask, 2, 'avg', 255)
@@ -371,6 +376,34 @@ class ZzzSnakeAnalyzer:
         )
 
         return info
+    
+
+def get_grid_coordinate_by_mask(
+        mask: MatLike,
+) -> tuple[NDArray, NDArray]:
+    """
+    根据掩码图 获取对应在网格上的坐标
+    Args:
+        mask: 掩码图
+
+    Returns:
+        y_list, x_list: 网格坐标
+    """
+    h, w = mask.shape
+
+    # 计算每个格子的高度和宽度
+    cell_h = h * 1.0 / game_const.GRID_ROWS
+    cell_w = w * 1.0 / game_const.GRID_COLS
+
+    # 遍历整个mask，找出所有值为255的像素点
+    y_coords, x_coords = np.where(mask == 255)
+    y_coords = y_coords // cell_h
+    y_coords = y_coords.astype(dtype=np.uint8)
+    x_coords = x_coords // cell_w
+    x_coords = x_coords.astype(dtype=np.uint8)
+
+    # 将集合转换为列表并返回
+    return y_coords, x_coords
 
 
 def get_coordinate_by_mask_center(
@@ -378,7 +411,7 @@ def get_coordinate_by_mask_center(
         radius: int = 1,
         sample_way: str = 'avg',
         lower: int = 255
-) -> tuple[list[int], list[int]]:
+) -> tuple[NDArray, NDArray]:
     """
     从掩码图上 对网格中点采样 并输出符合条件的网格坐标
 
@@ -476,34 +509,6 @@ def make_grid(
 
     grid[empty_list[0], empty_list[1]] = game_const.GridType.EMPTY
     grid[own_body_list[0], own_body_list[1]] = game_const.GridType.OWN_BODY
-    # 结合颜色匹配和上一次预测的位置 筛选真实的head
-    head = None
-    # 先使用颜色匹配 找蛇身颜色范围能匹配的蛇头
-    for y, x in zip(own_head_list[0], own_head_list[1]):
-        if grid[y][x] == game_const.GridType.OWN_BODY:
-            if head is None:
-                head = (int(y), int(x))
-            else:
-                head = None
-                break
-
-    # 使用颜色匹配不到的时候 使用上一次预测的位置
-    if (head is None and last_info is not None
-            and last_info.predict_head is not None
-            and game_utils.is_pos_in_grid(last_info.predict_head)
-            and grid[last_info.predict_head[0]][last_info.predict_head[1]] == game_const.GridType.OWN_BODY
-    ):
-        head = last_info.predict_head
-    # 如果上一次预测的位置不合法 则使用上一次的真实位置
-    if (head is None and last_info is not None
-            and last_info.head is not None
-            and game_utils.is_pos_in_grid(last_info.head)
-            and grid[last_info.head[0]][last_info.head[1]] == game_const.GridType.OWN_BODY
-    ):
-        head = last_info.head
-
-    if head is not None:
-        grid[head[0]][head[1]] = game_const.GridType.OWN_HEAD
 
     # body 包含了 head 需要先赋值body
     grid[blue_body_list[0], blue_body_list[1]] = game_const.GridType.BLUE_BODY
@@ -518,6 +523,28 @@ def make_grid(
     grid[blue_diamond_list[0], blue_diamond_list[1]] = game_const.GridType.BLUE_DIAMOND
 
     grid[bomb_list[0], bomb_list[1]] = game_const.GridType.BOMB
+
+    # 由于吃了无敌后会变色 会被误判成其他蛇 因此自己的蛇头需要最后在赋值
+    # 先去重找到出现次数最多的蛇头坐标
+    head = None
+    head_pos_max_cnt: int = 0
+    head_pos_map: dict[tuple[int, int], int] = {}
+    for y, x in zip(own_head_list[0], own_head_list[1]):
+        pos = (int(y), int(x))
+        head_pos_cnt = head_pos_map.get(pos, 0) + 1
+        head_pos_map[pos] = head_pos_cnt
+        if head_pos_cnt > head_pos_max_cnt:
+            head = pos
+
+    # 使用颜色匹配不到的时候 使用上一次预测的位置
+    if head is None and last_info is not None:
+        if last_info.predict_head is not None and not last_info.is_predict_danger:
+            head = last_info.predict_head
+        elif last_info.head is not None:
+            head = last_info.head
+
+    if head is not None:
+        grid[head[0]][head[1]] = game_const.GridType.OWN_HEAD
 
     # 是否可到达
     can_go_grid_list: list[NDArray[np.uint8]] = []
@@ -581,9 +608,9 @@ def cal_can_go_grid(
 
     next_grid_type = grid[next_pos[0], next_pos[1]]
     if not (next_grid_type == game_const.GridType.EMPTY
-        or next_grid_type == game_const.GridType.YELLOW_CRYSTAL
-        or next_grid_type == game_const.GridType.BLUE_DIAMOND
-        or next_grid_type == game_const.GridType.GREEN_SPEED
+            or next_grid_type == game_const.GridType.YELLOW_CRYSTAL
+            or next_grid_type == game_const.GridType.BLUE_DIAMOND
+            or next_grid_type == game_const.GridType.GREEN_SPEED
     ):  # 不是可以移动的位置
         return can_go_grid
 
@@ -623,6 +650,7 @@ class GridDigitFormat:
         self.font_scale: float = font_scale
         self.thickness: int = thickness
 
+
 def grid_to_image(grid: NDArray[np.uint8]) -> MatLike:
     """
     将二维数组转换为网格图像
@@ -651,7 +679,7 @@ def grid_to_image(grid: NDArray[np.uint8]) -> MatLike:
     font = cv2.FONT_HERSHEY_SIMPLEX
 
     # 绘制参数 需要与 game_const.GridType 对应
-    digit_format: list[GridDigitFormat] = [None for _ in game_const.GridType]
+    digit_format: list[Optional[GridDigitFormat]] = [None for _ in game_const.GridType]
     digit_format[game_const.GridType.UNKNOWN] = GridDigitFormat((0, 0, 0), 0.8, 2)
     digit_format[game_const.GridType.EMPTY] = GridDigitFormat((255, 255, 255), 0.8, 2)
     digit_format[game_const.GridType.OWN_HEAD] = GridDigitFormat((255, 73, 42), 0.8, 3)
@@ -691,6 +719,29 @@ def grid_to_image(grid: NDArray[np.uint8]) -> MatLike:
     return img
 
 
+def find_255_pixels_in_grid(mask: NDArray[np.uint8]) -> tuple[NDArray, NDArray]:
+    """
+    找出mask中值为255的像素点，并将这些像素点的坐标转换为(GRID_ROWS, GRID_COLS)
+
+    Args:
+        mask: 输入的H*W mask数组
+
+    Returns:
+        grid_positions: (GRID_ROWS, GRID_COLS) 的坐标列表
+    """
+    h, w = mask.shape
+
+    # 计算每个格子的高度和宽度
+    cell_h = h * 1.0 / game_const.GRID_ROWS
+    cell_w = w * 1.0 / game_const.GRID_COLS
+
+    # 遍历整个mask，找出所有值为255的像素点
+    y_coords, x_coords = np.where(mask == 255)
+
+    # 将集合转换为列表并返回
+    return y_coords // cell_h, x_coords // cell_w
+
+
 def __debug_analyse():
     original_height: int = zzz_snake_gym.game_const.GAME_RECT[3] - zzz_snake_gym.game_const.GAME_RECT[1]
     original_width = zzz_snake_gym.game_const.GAME_RECT[2] - zzz_snake_gym.game_const.GAME_RECT[0]
@@ -698,11 +749,10 @@ def __debug_analyse():
     analyzer = ZzzSnakeAnalyzer((original_width // scale, original_height // scale))
     from zzz_snake_gym import cv2_utils
     from zzz_snake_gym import debug_utils
-    screenshot = debug_utils.get_debug_image('_1745146637092')
+    screenshot = debug_utils.get_debug_image('_1745150182387')
     import time
     start_time = time.time()
-    for _ in range(100):
-        result = analyzer.analyse(screenshot, time.time(), None)
+    result = analyzer.analyse(screenshot, time.time(), None)
     print(time.time() - start_time)
 
     cv2_utils.show_image(result.game_part, win_name='game_part')

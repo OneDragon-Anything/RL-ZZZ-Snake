@@ -38,6 +38,7 @@ GRID_ROWS: int = 25
 GRID_COLS: int = 29
 GRID_TOTAL_CNT: int = GRID_ROWS * GRID_COLS
 
+
 # 网格类型
 class GridType(IntEnum):
     UNKNOWN = 0
@@ -60,10 +61,11 @@ class GridType(IntEnum):
 EMPTY_HSV_RANGE = [ np.array([85, 70, 185], dtype=np.uint8), np.array([95, 250, 245], dtype=np.uint8) ]  # 空白区域
 
 OWN_HEAD_HSV_RANGE = [ np.array([4, 51, 255], dtype=np.uint8), np.array([5, 220, 255], dtype=np.uint8) ]  # 自己的头
+OWN_HEAD_EYE_HSV_RANGE = [ np.array([0, 0, 255], dtype=np.uint8), np.array([0, 0, 255], dtype=np.uint8) ]  # 自己的头眼睛
 OWN_BODY_HSV_RANGE = [ np.array([4, 51, 255], dtype=np.uint8), np.array([15, 255, 255], dtype=np.uint8) ]  # 自己的身体 包括头
-BLUE_HEAD_HSV_RANGE = [ np.array([126, 183, 255], dtype=np.uint8), np.array([127, 184, 255], dtype=np.uint8) ]  # 蓝蛇的头
+BLUE_HEAD_HSV_RANGE = [ np.array([126, 178, 255], dtype=np.uint8), np.array([127, 184, 255], dtype=np.uint8) ]  # 蓝蛇的头
 BLUE_BODY_HSV_RANGE = [ np.array([126, 135, 255], dtype=np.uint8), np.array([130, 184, 255], dtype=np.uint8) ]  # 蓝蛇的身体 包括头
-PURPLE_HEAD_HSV_RANGE = [ np.array([150, 240, 255], dtype=np.uint8), np.array([150, 255, 255], dtype=np.uint8) ]  # 紫蛇的头
+PURPLE_HEAD_HSV_RANGE = [ np.array([150, 228, 255], dtype=np.uint8), np.array([150, 255, 255], dtype=np.uint8) ]  # 紫蛇的头
 PURPLE_BODY_HSV_RANGE = [ np.array([133, 135, 255], dtype=np.uint8), np.array([150, 255, 255], dtype=np.uint8) ]  # 紫蛇的身体 包括头
 PINK_HEAD_HSV_RANGE = [ np.array([0, 255, 255], dtype=np.uint8), np.array([0, 255, 255], dtype=np.uint8) ]  # 粉蛇的头
 PINK_BODY_HSV_RANGE = [ np.array([155, 153, 255], dtype=np.uint8), np.array([180, 255, 255], dtype=np.uint8) ]  # 粉蛇的身体 包括头
@@ -73,3 +75,4 @@ GREEN_SPEED_HSV_RANGE = [ np.array([73, 114, 242], dtype=np.uint8), np.array([75
 BLUE_DIAMOND_HSV_RANGE = [ np.array([85, 166, 204], dtype=np.uint8), np.array([90, 217, 235], dtype=np.uint8) ]  # 蓝色钻石
 
 BOMB_HSV_RANGE = [ np.array([0, 40, 165], dtype=np.uint8), np.array([0, 179, 230], dtype=np.uint8) ]  # 炸弹区域
+BOMB_HSV_RANGE_2 = [ np.array([170, 40, 165], dtype=np.uint8), np.array([180, 179, 230], dtype=np.uint8) ]  # 炸弹区域2

@@ -32,8 +32,10 @@ class ZzzSnakeEnv(gym.Env):
             scale: int = 8,
             save_game_record: bool = False,
             game_record_dir: str = None,
+            obs_type: str = 'full',  # 新增参数: 'full' 或 'image'
     ):
         gym.Env.__init__(self)
+        self.obs_type = obs_type
 
         self.save_game_record: bool = save_game_record and game_record_dir is not None  # 是否保存数据用于离线训练
         self.game_record_dir: str = game_record_dir  # 保存数据的目录
@@ -48,16 +50,27 @@ class ZzzSnakeEnv(gym.Env):
             original_height // scale,
         )
 
-        grid_types = len(game_const.GridType)
-        self.observation_space: spaces.Dict = spaces.Dict({
-            'image': spaces.Box(low=0, high=255, shape=(self.target_size[1], self.target_size[0], 3 + grid_types),
-                                dtype=np.uint8),
-            'grid': spaces.Box(low=0, high=1, shape=(game_const.GRID_ROWS, game_const.GRID_COLS, grid_types),
-                               dtype=np.uint8),
-            'feat_direction_cnt': spaces.Box(low=0, high=1, shape=(16,), dtype=np.float32),  # 朝4个方向移动 预估可遇到的各类型数量
-            'feat_distance': spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32),  # 与各类型目标点的距离偏移量
-            'last_action': spaces.Box(low=0, high=1, shape=(4,), dtype=np.uint8),
-        })
+        # 根据 obs_type 定义观察空间
+        if self.obs_type == 'full':
+            grid_types = len(game_const.GridType)
+            self.observation_space = spaces.Dict({
+                'image': spaces.Box(low=0, high=255, shape=(self.target_size[1], self.target_size[0], 3 + grid_types),
+                                    dtype=np.uint8),
+                'grid': spaces.Box(low=0, high=1, shape=(game_const.GRID_ROWS, game_const.GRID_COLS, grid_types),
+                                   dtype=np.uint8),
+                'feat_direction_cnt': spaces.Box(low=0, high=1, shape=(16,), dtype=np.float32),  # 朝4个方向移动 预估可遇到的各类型数量
+                'feat_distance': spaces.Box(low=-1, high=1, shape=(4,), dtype=np.float32),  # 与各类型目标点的距离偏移量
+                'last_action': spaces.Box(low=0, high=1, shape=(4,), dtype=np.uint8),
+            })
+        else: # obs_type == 'image'
+             # 注意: Tianshou的CNN通常期望通道优先 (C, H, W), 但Gym环境通常返回 (H, W, C)
+             # 我们将在网络中处理维度转换
+            self.observation_space = spaces.Box(
+                low=0, high=255,
+                shape=(self.target_size[1], self.target_size[0], 3), # H, W, C (RGB)
+                dtype=np.uint8
+            )
+
 
         # 定义动作空间
         # 0=上，1=下，2=左，3=右
@@ -165,8 +178,9 @@ class ZzzSnakeEnv(gym.Env):
         """
         self.last_info.set_direction(direction, self.last_info_2)
 
-    def get_obs(self, info: ZzzSnakeGameInfo) -> dict:
+    def get_obs(self, info: ZzzSnakeGameInfo) -> ObsType:
         """
+        获取观察空间
         大概6ms
         Args:
             info: 当前游戏信息
@@ -178,32 +192,35 @@ class ZzzSnakeEnv(gym.Env):
             return self.game_over_obs()
 
         game_part = cv2.resize(info.game_part, self.target_size, interpolation=cv2.INTER_AREA)
-        mask_shape = game_part.shape[:2]
 
-        return {
-            'image': np.concatenate([
-                game_part,
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.UNKNOWN), axis=-1),
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.EMPTY), axis=-1),
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.OWN_BODY), axis=-1),
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.OWN_HEAD), axis=-1),
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.BLUE_BODY), axis=-1),
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.BLUE_HEAD), axis=-1),
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.PURPLE_BODY), axis=-1),
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.PURPLE_HEAD), axis=-1),
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.PINK_BODY), axis=-1),
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.PINK_HEAD), axis=-1),
+        if self.obs_type == 'image':
+            return game_part  # 返回 (H, W, 3) 的 NumPy 数组
+        else:  # self.obs_type == 'full'
+            mask_shape = game_part.shape[:2]
+            return {
+                'image': np.concatenate([
+                    game_part,
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.UNKNOWN), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.EMPTY), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.OWN_BODY), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.OWN_HEAD), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.BLUE_BODY), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.BLUE_HEAD), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.PURPLE_BODY), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.PURPLE_HEAD), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.PINK_BODY), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.PINK_HEAD), axis=-1),
 
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.YELLOW_CRYSTAL), axis=-1),
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.GREEN_SPEED), axis=-1),
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.BLUE_DIAMOND), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.YELLOW_CRYSTAL), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.GREEN_SPEED), axis=-1),
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.BLUE_DIAMOND), axis=-1),
 
-                np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.BOMB), axis=-1),
-            ], axis=-1),
-            'grid': get_one_hot_grid(info.grid),
-            'last_action': np.eye(4)[self.last_info.real_direction].astype(np.uint8) if self.last_info is not None and 0 <= self.last_info.real_direction < 4 else np.zeros(4, dtype=np.uint8),
-            'feat_direction_cnt': np.array([
-                # info.head[0] * 1.0 / game_const.GRID_ROWS,
+                    np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.BOMB), axis=-1),
+                ], axis=-1),
+                'grid': get_one_hot_grid(info.grid),
+                'last_action': np.eye(4)[self.last_info.real_direction].astype(np.uint8) if self.last_info is not None and 0 <= self.last_info.real_direction < 4 else np.zeros(4, dtype=np.uint8),
+                'feat_direction_cnt': np.array([
+                    # info.head[0] * 1.0 / game_const.GRID_ROWS,
                 # info.head[1] * 1.0 / game_const.GRID_COLS,
                 info.can_go_cnt[0] * 1.0 / game_const.GRID_TOTAL_CNT,
                 info.can_go_cnt[1] * 1.0 / game_const.GRID_TOTAL_CNT,
@@ -226,23 +243,32 @@ class ZzzSnakeEnv(gym.Env):
                 info.closest_reward_dy_1 * 1.0 / game_const.GRID_ROWS,
                 info.closest_reward_dy_2 * 1.0 / game_const.GRID_ROWS,
                 info.closest_reward_dx_1 * 1.0 / game_const.GRID_COLS,
-                info.closest_reward_dx_2 * 1.0 / game_const.GRID_COLS,
-            ], dtype=np.float32),
-        }
+                    info.closest_reward_dx_2 * 1.0 / game_const.GRID_COLS,
+                ], dtype=np.float32),
+            }
 
-    def game_over_obs(self) -> dict:
+    def game_over_obs(self) -> ObsType:
         """
-        游戏结束的观察空间
+        游戏结束时的观察空间 (根据 self.obs_type 返回全零字典或图像)
         Returns:
-
+            与 observation_space 结构/形状相同的全零观察值
         """
-        return {
-            'image': np.zeros(self.observation_space['image'].shape, dtype=np.uint8),
-            'grid': np.zeros(self.observation_space['grid'].shape, dtype=np.uint8),
-            'last_action': np.zeros(self.observation_space['last_action'].shape, dtype=np.uint8),
-            'feat_direction_cnt': np.zeros(self.observation_space['feat_direction_cnt'].shape, dtype=np.float32),
-            'feat_distance': np.zeros(self.observation_space['feat_distance'].shape, dtype=np.float32),
-        }
+        if self.obs_type == 'image':
+            return np.zeros(self.observation_space.shape, dtype=self.observation_space.dtype)
+        else: # self.obs_type == 'full'
+            # 需要确保访问 self.observation_space 的子空间是安全的
+            if isinstance(self.observation_space, spaces.Dict):
+                return {
+                    'image': np.zeros(self.observation_space['image'].shape, dtype=np.uint8),
+                    'grid': np.zeros(self.observation_space['grid'].shape, dtype=np.uint8),
+                    'last_action': np.zeros(self.observation_space['last_action'].shape, dtype=np.uint8),
+                    'feat_direction_cnt': np.zeros(self.observation_space['feat_direction_cnt'].shape, dtype=np.float32),
+                    'feat_distance': np.zeros(self.observation_space['feat_distance'].shape, dtype=np.float32),
+                }
+            else:
+                # Fallback or error handling if space structure is unexpected
+                return np.zeros(self.observation_space.shape, dtype=self.observation_space.dtype)
+
 
     def step(
             self,
