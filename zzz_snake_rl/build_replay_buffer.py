@@ -6,8 +6,9 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 from zzz_snake_gym import os_utils
 from zzz_snake_gym.game_record_env import GameRecordLoader, ZzzSnakeGameRecordEnv
-from zzz_snake_rl.env_utils import REPLAY_BUFFER_SAVE_EPISODE, TRAIN_BUFFER_SIZE
-from zzz_snake_rl.train import make_train_env
+from zzz_snake_rl import train_utils
+from zzz_snake_rl.env_utils import REPLAY_BUFFER_SAVE_EPISODE, TRAIN_BUFFER_SIZE, TRAIN_BATCH_SIZE
+from zzz_snake_rl.train_dqn import make_train_env
 
 RECORD_LOADER = GameRecordLoader(
     game_record_dir=os_utils.get_path_under_workspace_dir(['.debug', 'game_record'])
@@ -80,9 +81,11 @@ def build():
         env=env,
         verbose=1,
         buffer_size=TRAIN_BUFFER_SIZE,
+        tensorboard_log=train_utils.get_tensorboard_log_dir(),
         # 这里的训练没用 下述参数都是用于避免更新参数的
-        train_freq=RECORD_LOADER.total_step,
-        batch_size=1,
+        train_freq=(1, 'episode'),
+        batch_size=TRAIN_BATCH_SIZE,
+        gradient_steps=10,
     )
 
     save_callback = ReplayBufferSaver(
@@ -91,7 +94,13 @@ def build():
         replay_buffer_dir=os_utils.get_path_under_workspace_dir(['.debug', 'replay_buffer'])
     )
 
-    model.learn(total_timesteps=RECORD_LOADER.total_step, callback=save_callback)
+    model.learn(
+        total_timesteps=RECORD_LOADER.total_step,
+        # total_timesteps=1000,
+        callback=save_callback
+    )
+    # 保存最终模型
+    model.save(os.path.join(train_utils.get_sb3_model_save_dir(), "buffer_pretrain_model"))
 
 
 if __name__ == '__main__':

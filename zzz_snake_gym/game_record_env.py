@@ -1,4 +1,5 @@
 import os
+import random
 import time
 from typing import SupportsFloat, Any, Optional
 
@@ -50,9 +51,10 @@ class GameRecordLoader:
                 self.episode_list.append(episode_path)
                 self.total_step += len(os.listdir(episode_path)) // 2
 
-        self.total_step -= 1  # 减1是最开始reset的时候会取掉第一帧画面
-
-        print(f'总共: {len(self.episode_list)} 个episode, {self.total_step} 个step')
+        self.total_step += len(self.episode_list) + 1  # 开始游戏时的reset和每次结局的reset
+        # 随机打乱
+        random.shuffle(self.episode_list)
+        print(f'总共: {len(self.episode_list)} 个episode')
 
     def next_episode(self) -> None:
         """
@@ -61,6 +63,10 @@ class GameRecordLoader:
             None
         """
         self.episode_idx += 1
+        if self.episode_idx >= len(self.episode_list):
+            self.episode_idx = 0
+            # 随机打乱
+            random.shuffle(self.episode_list)
         self.step_idx = 0
         episode_name = self.episode_list[self.episode_idx] if self.episode_idx < len(self.episode_list) else None
         print(f'进入下一个episode {episode_name}')
@@ -81,7 +87,7 @@ class GameRecordLoader:
         json_path = os.path.join(episode_name, f'{self.step_idx}.json')
         if not os.path.exists(screenshot_path) or not os.path.exists(json_path):
             self.next_screenshot = None
-            self.next_data = None
+            self.next_data = {}
         else:
             self.next_screenshot = cv2_utils.read_image(screenshot_path)
             self.next_data = os_utils.read_json(json_path)
@@ -142,6 +148,8 @@ class ZzzSnakeGameRecordEnv(ZzzSnakeEnv):
 
             # 继续原来的逻辑
             game_info = self.analyzer.analyse(screenshot, screenshot_time, self.last_info)
+
+        # time.sleep(0.1)  # 模拟游戏延迟 防止收集数据过快出现bug
         return ZzzSnakeEnv.step_with_info(self, game_info)
 
     def reset(
