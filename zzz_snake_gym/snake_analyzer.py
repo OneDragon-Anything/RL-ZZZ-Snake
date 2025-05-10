@@ -25,7 +25,8 @@ class ZzzSnakeGameInfo:
 
             score: int,
             game_over: bool,
-            head: tuple[int, int],
+            predict_head_pos: tuple[int, int],
+            head_move_direction: int,
             grid: NDArray[np.uint8],
             can_go_grid_list: list[NDArray[np.uint8]],
             total_reward_cnt: int,
@@ -42,7 +43,8 @@ class ZzzSnakeGameInfo:
         self.score: int = score  # 当前画面显示的分数
         self.game_over: bool = game_over  # 当前画面是否在游戏结束
 
-        self.head: tuple[int, int] = head
+        self.predict_head_pos: tuple[int, int] = predict_head_pos  # 当前画面和上一帧结合计算的蛇头位置
+        self.head_move_direction: int = head_move_direction  # 当前画面和上一帧画面 使用识别的蛇头位置 计算出来的正在移动的方向
         self.grid: NDArray[np.uint8] = grid
         self.can_go_grid_list: list[NDArray[np.uint8]] = can_go_grid_list
 
@@ -53,10 +55,11 @@ class ZzzSnakeGameInfo:
         self.total_reward_cnt: int = max(total_reward_cnt, 1)
         self.cal_by_direction()
 
-        self.direction: int = -1  # 在分析的时候还没有做出动作 方向未知
+        self.press_direction: int = -1  # 按键的方向 初始化还没有按键
+        self.effective_direction: int = -1  # 应该生效的方向
+
         self.real_direction: int = -1  # 真实的方向 即当前动作可能不生效 需要保持上一个方向
-        self.last_real_direction: int = -1  # 上一个真实的方向 当前真实方向朝向障碍或墙边 其实无法产生移动 因此要用上一个真实方向继续判断当前的动作方向是否合法
-        self.predict_head: Optional[tuple[int, int]] = None  # 根据真实的方向 预估下一个位置
+        self.predict_next_head_pos: Optional[tuple[int, int]] = None  # 根据真实的方向 预估下一个位置
 
         self.dis_to_reward: int = ZzzSnakeGameInfo.INF_DIS
         self.left_top_reward_dx: int = -game_const.GRID_COLS
@@ -70,54 +73,48 @@ class ZzzSnakeGameInfo:
 
         self.cal_reward_dis()
 
-        self.in_boundary: bool = False  # 当前位置是否在边界上
+        self.current_in_boundary: bool = False  # 当前位置是否在边界上
         self.dis_to_boundary: int = ZzzSnakeGameInfo.INF_DIS  # 与边界的距离
+        self.cal_boundary_dis()  # 计算边界相关的值
 
         # 根据坐标进行的一系列判断
-        self.is_towards_boundary: bool = False
-        self.is_predict_danger: bool = False  # 预估下一步是否危险 边界/障碍/炸弹/可移动格子最少
-        self.is_predict_reward: bool = False  # 预估下一步到达食物
+        self.is_next_danger: bool = False  # 预估下一步是否危险 边界/障碍/炸弹/可移动格子最少
+        self.is_next_reward: bool = False  # 预估下一步到达食物
 
-    def set_direction(self, direction: int, last_info: Optional['ZzzSnakeGameInfo']) -> None:
+    def set_direction(self, press_direction: int, last_info: Optional['ZzzSnakeGameInfo']) -> None:
         """
         设置本次执行的动作 同时预测下一个位置
         Args:
-            direction: 动作
+            press_direction: 本次按键的动作
             last_info: 上一个游戏信息
 
         Returns:
 
         """
         # 非法的方向
-        if direction < 0 or direction > 3:
+        if press_direction < 0 or press_direction > 3:
             return
 
-        self.direction = direction
-        last_direction = last_info.real_direction if last_info is not None else direction
+        self.press_direction = press_direction
+        self.effective_direction = press_direction
 
-        if game_utils.is_opposite_direction(direction, last_direction):
-            # 相反操作无效 继续使用之前的操作
-            # 不能合并到下述的转向蛇身判断 因为长度1的时候也不能反方向移动 这时候反方向没有蛇身
-            self.real_direction = last_direction
-        else:
-            predict_pos = game_utils.cal_next_position(self.head, direction)
-            if (predict_pos is not None
-                and game_utils.is_pos_in_grid(predict_pos)
-                and self.grid[predict_pos[0], predict_pos[1]] == game_const.GridType.OWN_BODY
+        if self.head_move_direction != -1:
+            if (last_info is not None
+                    and self.head_move_direction != last_info.press_direction
+                and not game_utils.is_opposite_direction(self.head_move_direction, last_info.press_direction)
             ):
-                # 如果是在尝试转向蛇身 则该操作肯定非法 需要保持使用上一个真实方向
-                # 主要出现在靠墙移动时 先转向墙 再想转向前一个方向的反方向
-                # 例如在最上方往右移动 先按上 再按左 则最后的左操作无效
-                self.real_direction = last_direction
-            else:
-                self.real_direction = direction
+                # 上一个动作还没有生效的话 继续做上一次的动作
+                self.effective_direction = last_info.press_direction
+
+        # 如果生效方向和蛇头移动方向相反 则设置为无效
+        if game_utils.is_opposite_direction(self.head_move_direction, self.effective_direction):
+            self.effective_direction = self.head_move_direction
 
         # 计算下一个位置 和其它标记位信息
-        if self.head is not None:
-            self.predict_head = game_utils.cal_next_position(self.head, self.real_direction)
-            self.cal_boundary_dis()
-            self.is_predict_danger = self.cal_is_predict_danger()
-            self.is_predict_reward = self.cal_is_predict_reward()
+        if self.predict_head_pos is not None:
+            self.predict_next_head_pos = game_utils.cal_next_position(self.predict_head_pos, self.effective_direction)
+            self.is_next_danger = self.cal_is_next_danger()
+            self.is_next_reward = self.cal_is_next_reward()
 
     def cal_boundary_dis(self) -> None:
         """
@@ -125,41 +122,45 @@ class ZzzSnakeGameInfo:
         Returns:
             None
         """
-        if self.head is not None:
-            if self.real_direction == 0:
-                self.dis_to_boundary = self.head[0]
-            elif self.real_direction == 1:
-                self.dis_to_boundary = zzz_snake_gym.game_const.GRID_ROWS - 1 - self.head[0]
-            elif self.real_direction == 2:
-                self.dis_to_boundary = self.head[1]
-            elif self.real_direction == 3:
-                self.dis_to_boundary = zzz_snake_gym.game_const.GRID_COLS - 1 - self.head[1]
+        if self.predict_head_pos is None:
+            return
 
-            if self.head[0] == 0 or self.head[0] == zzz_snake_gym.game_const.GRID_ROWS - 1:
-                self.in_boundary = True
-            elif self.head[1] == 0 or self.head[1] == zzz_snake_gym.game_const.GRID_COLS - 1:
-                self.in_boundary = True
-            else:
-                self.in_boundary = False
+        dis = [
+            self.predict_head_pos[0],
+            zzz_snake_gym.game_const.GRID_ROWS - 1 - self.predict_head_pos[0],
+            self.predict_head_pos[1],
+            zzz_snake_gym.game_const.GRID_COLS - 1 - self.predict_head_pos[1],
+        ]
+        if 0 <= self.head_move_direction < 4:
+            self.dis_to_boundary = dis[self.head_move_direction]
+        else:
+            self.dis_to_boundary = min(dis)
 
-    def cal_is_predict_danger(self) -> bool:
+        if self.predict_head_pos[0] == 0 or self.predict_head_pos[0] == zzz_snake_gym.game_const.GRID_ROWS - 1:
+            self.current_in_boundary = True
+        elif self.predict_head_pos[1] == 0 or self.predict_head_pos[1] == zzz_snake_gym.game_const.GRID_COLS - 1:
+            self.current_in_boundary = True
+        else:
+            self.current_in_boundary = False
+
+    def cal_is_next_danger(self) -> bool:
         """
         Returns:
             当前动作是否朝未知格子前进
         """
         # 预估位置非法
-        if not game_utils.is_pos_in_grid(self.predict_head):
+        if not game_utils.is_pos_in_grid(self.predict_next_head_pos):
             return True
 
-        if not 0 <= self.real_direction < len(self.direction_danger):
+        if not 0 <= self.effective_direction < len(self.direction_danger):
             return False
 
         # 下一步就撞墙
-        if self.direction_danger[self.real_direction] == 1:
+        if self.direction_danger[self.effective_direction] == 1:
             return True
 
         # 该方向能走的格子最少
-        if self.real_direction == int(np.argmin(self.can_go_cnt)):
+        if self.effective_direction == int(np.argmin(self.can_go_cnt)):
             return True
 
         return False
@@ -168,7 +169,7 @@ class ZzzSnakeGameInfo:
         """
         计算最近的奖励点距离及其偏移量
         """
-        if self.head is None:
+        if self.predict_head_pos is None:
             return
 
         # 创建奖励点的布尔掩码
@@ -185,7 +186,7 @@ class ZzzSnakeGameInfo:
             return
 
         # 计算所有奖励点到头部的偏移量
-        offsets = reward_positions - np.array(self.head)
+        offsets = reward_positions - np.array(self.predict_head_pos)
 
         # 计算曼哈顿距离
         distances = np.abs(offsets).sum(axis=1)
@@ -227,7 +228,7 @@ class ZzzSnakeGameInfo:
         计算4个方向将会遇到的情况
         """
         for direction in range(4):
-            if self.head is None:
+            if self.predict_head_pos is None:
                 self.can_go_cnt.append(0)
                 self.can_go_reward_cnt.append(0)
                 self.direction_danger.append(1)
@@ -252,7 +253,7 @@ class ZzzSnakeGameInfo:
             self.can_go_cnt.append(len(can_go_x))
             self.can_go_reward_cnt.append(len(reward_x))
 
-            next_pos = game_utils.cal_next_position(self.head, direction)
+            next_pos = game_utils.cal_next_position(self.predict_head_pos, direction)
             if not game_utils.is_pos_in_grid(next_pos):  # 出界了
                 self.direction_danger.append(1)
                 self.direction_reward.append(0)
@@ -273,8 +274,8 @@ class ZzzSnakeGameInfo:
                     self.direction_danger.append(1)
                     self.direction_reward.append(0)
 
-    def cal_is_predict_reward(self) -> bool:
-        return self.real_direction is not None and self.direction == self.real_direction and self.direction_reward[self.real_direction]
+    def cal_is_next_reward(self) -> bool:
+        return self.effective_direction is not None and self.press_direction == self.effective_direction and self.direction_reward[self.effective_direction]
 
 
 class ZzzSnakeAnalyzer:
@@ -282,16 +283,25 @@ class ZzzSnakeAnalyzer:
     def __init__(self, target_size: tuple[int, int]):
         self.target_size = target_size  # 最后输出的尺寸 高、宽
 
-    def analyse(self, screenshot: MatLike, current_time: float, last_info: ZzzSnakeGameInfo) -> ZzzSnakeGameInfo:
+    def analyse(
+            self,
+            screenshot: MatLike,
+            current_time: float,
+            last_info: ZzzSnakeGameInfo,
+            should_be_move: bool
+    ) -> ZzzSnakeGameInfo:
         """
+        对当前画面进行分析 并更新上一帧的分析结果
+
         平均22ms
         Args:
             screenshot: 整个游戏画面
             current_time: 截图时间
             last_info: 上一次的分析结果
+            should_be_move: 根据时间 判断是否应该发生了移动
 
         Returns:
-
+            current_info: 当前帧的分析结果
         """
         # score: int = game_utils.get_current_score(screenshot)
         score = 0  # 统计分数感觉意义不大 只要存活下去分数自然高
@@ -306,7 +316,7 @@ class ZzzSnakeAnalyzer:
         # 使用HSV筛选一些区域mask
         empty_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.EMPTY_HSV_RANGE[0], game_const.EMPTY_HSV_RANGE[1])
         # own_head_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.OWN_HEAD_HSV_RANGE[0], game_const.OWN_HEAD_HSV_RANGE[1])
-        own_head_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.OWN_HEAD_EYE_HSV_RANGE[0], game_const.OWN_HEAD_EYE_HSV_RANGE[1])
+        own_head_eye_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.OWN_HEAD_EYE_HSV_RANGE[0], game_const.OWN_HEAD_EYE_HSV_RANGE[1])
         own_body_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.OWN_BODY_HSV_RANGE[0], game_const.OWN_BODY_HSV_RANGE[1])
         blue_head_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.BLUE_HEAD_HSV_RANGE[0], game_const.BLUE_HEAD_HSV_RANGE[1])
         blue_body_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.BLUE_BODY_HSV_RANGE[0], game_const.BLUE_BODY_HSV_RANGE[1])
@@ -326,7 +336,8 @@ class ZzzSnakeAnalyzer:
         grey_stone_future = thread_utils.submit(cv2.inRange, hsv_game_part, game_const.GREY_STONE_HSV_RANGE[0], game_const.GREY_STONE_HSV_RANGE[1])
 
         empty_mask = empty_future.result()
-        own_head_mask = own_head_future.result()
+        # own_head_mask = own_head_future.result()
+        own_head_eye_mask = own_head_eye_future.result()
         own_body_mask = own_body_future.result()
         blue_head_mask = blue_head_future.result()
         blue_body_mask = blue_body_future.result()
@@ -349,7 +360,7 @@ class ZzzSnakeAnalyzer:
 
         empty_future = thread_utils.submit(get_coordinate_by_mask_center, empty_mask, 2, 'avg', 125)
         # own_head_future = thread_utils.submit(get_coordinate_by_mask_center, own_head_mask, 1, 'avg', 255)
-        own_head_future = thread_utils.submit(get_grid_coordinate_by_mask, own_head_mask)
+        own_head_eye_future = thread_utils.submit(get_grid_coordinate_by_mask, own_head_eye_mask)
         own_body_future = thread_utils.submit(get_coordinate_by_mask_center, own_body_mask, 2, 'avg', 255)
         blue_head_future = thread_utils.submit(get_coordinate_by_mask_center, blue_head_mask, 2, 'max', 255)
         blue_body_future = thread_utils.submit(get_coordinate_by_mask_center, blue_body_mask, 2, 'avg', 255)
@@ -367,7 +378,8 @@ class ZzzSnakeAnalyzer:
         grey_stone_future = thread_utils.submit(get_coordinate_by_mask_center, grey_stone_mask, 2, 'avg', 125)
 
         empty_list = empty_future.result()
-        own_head_list = own_head_future.result()
+        # own_head_list = own_head_future.result()
+        own_head_eye_list = own_head_eye_future.result()
         own_body_list = own_body_future.result()
         blue_head_list = blue_head_future.result()
         blue_body_list = blue_body_future.result()
@@ -384,10 +396,16 @@ class ZzzSnakeAnalyzer:
         bomb_list = bomb_future.result()
         grey_stone_list = grey_stone_future.result()
 
-        head, grid, can_go_grid_list = make_grid(
+        total_reward_cnt: int = len(yellow_crystal_list[0]) + len(green_speed_list[0]) + len(blue_diamond_list[0]) + len(gold_star_list[0])
+
+        hsv_head_pos = get_head_pos(own_head_eye_list)
+        head_move_direction = get_head_move_direction(hsv_head_pos, last_info)
+        predict_head_pos = get_predict_head_pos(hsv_head_pos, last_info, should_be_move=should_be_move)
+
+        grid, can_go_grid_list = make_grid(
             last_info=last_info,
             empty_list=empty_list,
-            own_head_list=own_head_list,
+            head_pos=predict_head_pos,
             own_body_list=own_body_list,
             blue_head_list=blue_head_list,
             blue_body_list=blue_body_list,
@@ -404,7 +422,6 @@ class ZzzSnakeAnalyzer:
             bomb_list=bomb_list,
             grey_stone_list=grey_stone_list,
         )
-        total_reward_cnt: int = len(yellow_crystal_list[0]) + len(green_speed_list[0]) + len(blue_diamond_list[0]) + len(gold_star_list[0])
 
         info = ZzzSnakeGameInfo(
             start_time=current_time if last_info is None else last_info.start_time,
@@ -414,7 +431,8 @@ class ZzzSnakeAnalyzer:
             hsv_game_part=hsv_game_part,
             score=score,
             game_over=game_over,
-            head=head,
+            predict_head_pos=predict_head_pos,
+            head_move_direction=head_move_direction,
             grid=grid,
             can_go_grid_list=can_go_grid_list,
             total_reward_cnt=total_reward_cnt,
@@ -533,10 +551,91 @@ def get_coordinate_in_grid_mask(mask: MatLike, lower: int = 255) -> list[tuple[i
     return [(int(y), int(x)) for x, y in zip(x_coords, y_coords)]
 
 
+def get_head_pos(own_head_list: tuple[list[int], list[int]]) -> tuple[int, int]:
+    """
+    根据识别到的头部坐标列表 选出现最多的坐标 作为真正的头部坐标
+    Args:
+        own_head_list: 识别到的头部坐标列表
+
+    Returns:
+        head_pos: 出现最多的头部坐标
+    """
+    # 先去重找到出现次数最多的蛇头坐标
+    head = None
+    head_pos_max_cnt: int = 0
+    head_pos_map: dict[tuple[int, int], int] = {}
+    for y, x in zip(own_head_list[0], own_head_list[1]):
+        pos = (int(y), int(x))
+        head_pos_cnt = head_pos_map.get(pos, 0) + 1
+        head_pos_map[pos] = head_pos_cnt
+        if head_pos_cnt > head_pos_max_cnt:
+            head = pos
+
+    return head
+
+
+def get_predict_head_pos(
+        head_pos: tuple[int, int],
+        last_info: ZzzSnakeGameInfo,
+        should_be_move: bool,
+) -> Optional[tuple[int, int]]:
+    """
+    结合当前画面识别结果和上一帧信息 计算当前的坐标
+    Args:
+        head_pos: 当前的识别到的头部
+        last_info: 上一个位置信息
+        should_be_move: 是否应该移动
+
+    Returns:
+        predict_head_pos: 计算当前的坐标
+    """
+    if head_pos is not None:
+        return head_pos
+
+    # 使用颜色匹配不到的时候 使用上一次预测的位置
+    if head_pos is None and last_info is not None and should_be_move:
+        if last_info.predict_next_head_pos is not None and not last_info.is_next_danger:
+            return last_info.predict_next_head_pos
+        elif last_info.predict_head_pos is not None:
+            return last_info.predict_head_pos
+
+    return None
+
+
+def get_head_move_direction(
+        head_pos: tuple[int, int],
+        last_info: ZzzSnakeGameInfo,
+) -> int:
+    """
+    根据头部坐标的变动 判断当前的移动方向
+
+    Args:
+        head_pos: 当前的识别到的头部
+        last_info: 上一个位置信息
+
+    Returns:
+        direction: 移动方向
+    """
+    if head_pos is None or last_info is None or last_info.predict_head_pos is None:
+        return -1
+
+    if head_pos[0] == last_info.predict_head_pos[0]:
+        if head_pos[1] > last_info.predict_head_pos[1]:
+            return 3
+        elif head_pos[1] < last_info.predict_head_pos[1]:
+            return 2
+    elif head_pos[1] == last_info.predict_head_pos[1]:
+        if head_pos[0] > last_info.predict_head_pos[0]:
+            return 1
+        elif head_pos[0] < last_info.predict_head_pos[0]:
+            return 0
+
+    return -1
+
 def make_grid(
         last_info: ZzzSnakeGameInfo,
         empty_list: tuple[list[int], list[int]],
-        own_head_list: tuple[list[int], list[int]],
+        head_pos: tuple[int, int],
         own_body_list: tuple[list[int], list[int]],
         blue_head_list: tuple[list[int], list[int]],
         blue_body_list: tuple[list[int], list[int]],
@@ -552,7 +651,7 @@ def make_grid(
         gold_star_list: tuple[list[int], list[int]],
         bomb_list: tuple[list[int], list[int]],
         grey_stone_list: tuple[list[int], list[int]],
-) -> tuple[tuple[int, int], NDArray[np.uint8], list[NDArray[np.uint8]]]:
+) -> NDArray[np.uint8]:
     grid = np.full((game_const.GRID_ROWS, game_const.GRID_COLS),
                    game_const.GridType.UNKNOWN, dtype=np.int8)
 
@@ -580,26 +679,8 @@ def make_grid(
     grid[grey_stone_list[0], grey_stone_list[1]] = game_const.GridType.GREY_STONE
 
     # 由于吃了无敌后会变色 会被误判成其他蛇 因此自己的蛇头需要最后在赋值
-    # 先去重找到出现次数最多的蛇头坐标
-    head = None
-    head_pos_max_cnt: int = 0
-    head_pos_map: dict[tuple[int, int], int] = {}
-    for y, x in zip(own_head_list[0], own_head_list[1]):
-        pos = (int(y), int(x))
-        head_pos_cnt = head_pos_map.get(pos, 0) + 1
-        head_pos_map[pos] = head_pos_cnt
-        if head_pos_cnt > head_pos_max_cnt:
-            head = pos
-
-    # 使用颜色匹配不到的时候 使用上一次预测的位置
-    if head is None and last_info is not None:
-        if last_info.predict_head is not None and not last_info.is_predict_danger:
-            head = last_info.predict_head
-        elif last_info.head is not None:
-            head = last_info.head
-
-    if head is not None:
-        grid[head[0]][head[1]] = game_const.GridType.OWN_HEAD
+    if head_pos is not None:
+        grid[head_pos[0]][head_pos[1]] = game_const.GridType.OWN_HEAD
 
     # 是否可到达
     can_go_grid_list: list[NDArray[np.uint8]] = []
@@ -608,7 +689,7 @@ def make_grid(
             cal_can_go_grid(
                 last_info=last_info,
                 grid=grid,
-                head=head,
+                head_pos=head_pos,
                 direction=direction,
                 empty_list=empty_list,
                 blue_head_list=blue_head_list,
@@ -622,13 +703,13 @@ def make_grid(
             )
         )
 
-    return head, grid, can_go_grid_list
+    return grid, can_go_grid_list
 
 
 def cal_can_go_grid(
         last_info: ZzzSnakeGameInfo,
         grid: NDArray[np.uint8],
-        head: tuple[int, int],
+        head_pos: tuple[int, int],
         direction: int,
         empty_list: tuple[list[int], list[int]],
         blue_head_list: tuple[list[int], list[int]],
@@ -645,7 +726,7 @@ def cal_can_go_grid(
 
     Args:
         grid: 当前网格
-        head: 当前蛇头
+        head_pos: 当前蛇头
         direction: 将要移动的方向
         last_info: 上一次分析结果
 
@@ -658,11 +739,11 @@ def cal_can_go_grid(
     if last_info is not None and game_utils.is_opposite_direction(last_info.real_direction, direction):
         return can_go_grid
 
-    if head is None:
+    if head_pos is None:
         return can_go_grid
 
     # 判断下一个位置是否合法
-    next_pos = game_utils.cal_next_position(head, direction)
+    next_pos = game_utils.cal_next_position(head_pos, direction)
     if not game_utils.is_pos_in_grid(next_pos):  # 出界了
         return can_go_grid
 
@@ -800,10 +881,10 @@ def __debug_analyse():
     analyzer = ZzzSnakeAnalyzer((original_width // scale, original_height // scale))
     from zzz_snake_gym import cv2_utils
     from zzz_snake_gym import debug_utils
-    screenshot = debug_utils.get_debug_image('_1745858138131')
+    screenshot = debug_utils.get_debug_image('wrong')
     import time
     start_time = time.time()
-    result = analyzer.analyse(screenshot, time.time(), None)
+    result = analyzer.analyse(screenshot, time.time(), None, should_be_move=True)
     print(time.time() - start_time)
 
     cv2_utils.show_image(result.game_part, win_name='game_part')

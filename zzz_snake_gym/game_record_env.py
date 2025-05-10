@@ -136,7 +136,7 @@ class ZzzSnakeGameRecordEnv(ZzzSnakeEnv):
 
                 score=self.last_info.score,
                 game_over=True,
-                head=self.last_info.head,
+                predict_head_pos=self.last_info.predict_head_pos,
                 grid=self.last_info.grid,
                 can_go_grid_list=self.last_info.can_go_grid_list,
                 total_reward_cnt=self.last_info.total_reward_cnt,

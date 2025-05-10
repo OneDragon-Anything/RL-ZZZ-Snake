@@ -5,14 +5,15 @@ import gymnasium as gym
 from dotenv import load_dotenv
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import CheckpointCallback
-from stable_baselines3.common.env_util import DummyVecEnv
-from stable_baselines3.common.vec_env import VecFrameStack
+from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.utils import get_linear_fn
+from stable_baselines3.common.vec_env import VecFrameStack, SubprocVecEnv
 
 from zzz_snake_gym import os_utils
 from zzz_snake_gym.env import ZzzSnakeEnv
 from zzz_snake_rl import train_utils
 from zzz_snake_rl.env_utils import ENV_N_STACK, TRAIN_SAVE_GAME_RECORD, TRAIN_BUFFER_SIZE, TRAIN_BATCH_SIZE, \
-    ENV_DOWN_SCALE
+    ENV_DOWN_SCALE, TRAIN_GRADIENT_STEPS
 
 # 设置参数
 TOTAL_TIMESTEPS = 100000  # 总训练步数
@@ -38,7 +39,7 @@ def normal_env():
 
 def make_train_env(env_fn: Callable[[], gym.Env]):
     # 创建向量化环境
-    env = DummyVecEnv([env_fn])
+    env = make_vec_env(env_fn, vec_env_cls=SubprocVecEnv)
     # 帧堆叠
     return VecFrameStack(env, n_stack=ENV_N_STACK)
 
@@ -59,6 +60,12 @@ def train():
         print('继续上次')
         model = DQN.load(to_save_model_path)
         model.set_env(env)
+        model.exploration_initial_eps = 0.1  # 继续训练时 不需要有太多的随机
+        model.exploration_schedule = get_linear_fn(
+            model.exploration_initial_eps,
+            model.exploration_final_eps,
+            model.exploration_fraction,
+        )
     else:
         print('重新开始')
         # 创建模型
@@ -70,7 +77,7 @@ def train():
             batch_size=TRAIN_BATCH_SIZE,
             tensorboard_log=train_utils.get_tensorboard_log_dir(),
             train_freq=(1, 'episode'),
-            gradient_steps=10,
+            gradient_steps=TRAIN_GRADIENT_STEPS,
         )
 
     # 训练模型
@@ -79,6 +86,7 @@ def train():
         callback=[
             checkpoint_callback,
         ],
+
     )
 
     # 保存最终模型

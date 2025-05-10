@@ -23,7 +23,7 @@ class RecordedDQN(DQN):
         """覆盖predict方法，返回预录制的动作而不是模型预测的动作"""
 
         # 返回动作和状态（如果有的话）
-        return np.array([self.record_loader.next_data['direction']], dtype=np.int32), state
+        return np.array([self.record_loader.next_data['press_direction']], dtype=np.int32), state
 
 
 class ReplayBufferSaver(BaseCallback):

@@ -89,7 +89,9 @@ class ZzzSnakeEnv(gym.Env):
             无
         """
         # 上一帧的游戏信息
-        info = self.analyzer.analyse(screenshot, current_time, last_info)
+        info = self.analyzer.analyse(screenshot, current_time, last_info, False)
+        info.head_move_direction = 0
+        info.effective_direction = 0
         info.set_direction(0, last_info)
         return info
 
@@ -120,30 +122,31 @@ class ZzzSnakeEnv(gym.Env):
         # if info.score > self.last_info.score:
         #     reward += info.score - self.last_info.score  # 使用分数差来做奖励
 
-        # 本次操作非法
-        if self.last_info.direction != self.last_info.real_direction:
-            reward -= 0.5
+        # 本次操作不生效
+        # if self.last_info.press_direction != self.last_info.effective_direction:
+        #     reward -= 0.5
 
         # 前往危险的格子要扣分 边界/障碍
-        if self.last_info.is_predict_danger:
+        if self.last_info.is_next_danger:
             # print('危险扣分')
             reward -= 1
 
-        # 预估到达食物要加分
-        if self.last_info.is_predict_reward:
+        if (not self.last_info.is_next_danger
+                and self.last_info.is_next_reward):
+            # 上一帧不危险 预估到达食物 要加分
             reward += 1
-        elif (not self.last_info.is_predict_danger
+        elif (not self.last_info.is_next_danger
               and self.last_info.dis_to_reward > info.dis_to_reward
         ):
             # 上一帧不危险 接近奖励 要加分
-            # 越靠近奖励 加分越多 至少加0.1分
-            reward += max(0.5 - info.dis_to_reward * 0.1, 0.1)
-        elif (not self.last_info_2.is_predict_danger
+            # 越靠近奖励 加分越多
+            reward += max(0.3 - info.dis_to_reward * 0.05, 0.05)
+        elif (not self.last_info_2.is_next_danger
               and self.last_info.dis_to_reward < info.dis_to_reward
         ):
             # 上上一帧不危险 远离奖励 要扣分
-            # 越靠近奖励 扣分越多 至少扣0.1分
-            reward -= max(0.5 - self.last_info.dis_to_reward * 0.1, 0.1)
+            # 越靠近奖励 扣分越多
+            reward -= max(0.3 - self.last_info.dis_to_reward * 0.05, 0.05)
 
         # 保证范围
         if reward < -1:
@@ -181,8 +184,10 @@ class ZzzSnakeEnv(gym.Env):
             return self.game_over_obs()
 
         game_part = cv2.resize(info.game_part, self.target_size, interpolation=cv2.INTER_AREA)
-
         mask_shape = game_part.shape[:2]
+
+
+
         return {
             'image': np.concatenate([
                 game_part,
@@ -208,7 +213,7 @@ class ZzzSnakeEnv(gym.Env):
                 np.expand_dims(get_mask_by_grid_type(mask_shape, info.grid, game_const.GridType.GREY_STONE), axis=-1),
             ], axis=-1),
             'grid': get_one_hot_grid(info.grid),
-            'last_action': np.eye(4)[self.last_info.real_direction].astype(np.uint8) if self.last_info is not None and 0 <= self.last_info.real_direction < 4 else np.zeros(4, dtype=np.uint8),
+            'last_action': np.eye(4)[self.last_info.effective_direction].astype(np.uint8) if self.last_info is not None and 0 <= self.last_info.effective_direction < 4 else np.zeros(4, dtype=np.uint8),
             'feat_direction_cnt': np.array([
                 info.can_go_cnt[0] * 1.0 / game_const.GRID_TOTAL_CNT,
                 info.can_go_cnt[1] * 1.0 / game_const.GRID_TOTAL_CNT,
@@ -280,13 +285,15 @@ class ZzzSnakeEnv(gym.Env):
             current_time = time.time()
             # 获取新截图
             screenshot = self.screen_capturer.get_screenshot()
+            # 根据时间 判断是否应该发生了移动
+            should_be_move = current_time - self.last_info.current_time >= 0.5
             # 获取游戏信息
-            info = self.analyzer.analyse(screenshot, current_time, self.last_info)
+            info = self.analyzer.analyse(screenshot, current_time, self.last_info, should_be_move)
 
-            if self.last_info.head is None or info.head is None:
-                if current_time - self.last_info.current_time >= 1:
+            if self.last_info.predict_head_pos is None or info.predict_head_pos is None:
+                if should_be_move:
                     break
-            elif self.last_info.head != info.head:
+            elif self.last_info.predict_head_pos != info.predict_head_pos:
                 break
 
             if info.game_over:
@@ -294,6 +301,14 @@ class ZzzSnakeEnv(gym.Env):
 
             self.screen_capturer.active_window()
             time.sleep(0.01)
+
+        # 蛇死的时候 整条蛇会从蛇头开始到蛇尾消失。因此在结束的时候会看到坐标漂移
+        # if info.head is not None and self.last_info.head is not None:
+        #     if abs(info.head[0] - self.last_info.head[0]) + abs(info.head[1] - self.last_info.head[1]) >= 4:
+        #         cv2_utils.save_image(
+        #             info.screenshot,
+        #             os.path.join(os_utils.get_path_under_workspace_dir(['.debug', 'images']), 'wrong.png')
+        #         )
 
         return self.step_with_info(info)
 
@@ -308,9 +323,9 @@ class ZzzSnakeEnv(gym.Env):
         truncated = False
         # 判断奖励
         reward = self._get_reward(info)
-        print(f'上一个: 时间: {self.last_info.current_time - self.last_info.start_time:.4f} 动作: {self.last_info.direction} 修正动作: {self.last_info.real_direction}')
-        print(f'上一个: 坐标: {self.last_info.head} 预测坐标: {self.last_info.predict_head} 奖励: {reward:.2f}')
-        print(f'当前: 时间: {info.current_time - info.start_time:.4f} 坐标: {info.head}')
+        print(f'上一个: 时间: {self.last_info.current_time - self.last_info.start_time:.4f} 蛇头方向: {self.last_info.head_move_direction} 按键动作: {self.last_info.press_direction} 生效动作: {self.last_info.effective_direction}')
+        print(f'上一个: 坐标: {self.last_info.predict_head_pos} 预测坐标: {self.last_info.predict_next_head_pos} 奖励: {reward:.2f}')
+        print(f'当前: 时间: {info.current_time - info.start_time:.4f} 坐标: {info.predict_head_pos}')
         # 记录游戏信息
         self.last_info_2 = self.last_info
         self.last_info = info
@@ -335,15 +350,14 @@ class ZzzSnakeEnv(gym.Env):
             info (dictionary): 其它的调试信息
         """
         gym.Env.reset(self, seed=seed, options=options)
-        # 一些必要的重置
-        self.screen_capturer.reset()
 
         # 如果start_time不是0 说明已经开始过游戏 这时候需要等待结算画面出现
         need_summary_screen: bool = self.last_info is not None and self.last_info.start_time != 0
         existed_summary_screen: bool = False
         # 重新开始游戏
         while True:
-            self.screen_capturer.active_window()
+            # 一些必要的重置
+            self.screen_capturer.reset()
             current_time: float = time.time()
             screenshot = self.screen_capturer.get_screenshot()
 
@@ -399,7 +413,7 @@ class ZzzSnakeEnv(gym.Env):
 
         info_path = os.path.join(to_save_dir, f'{self.save_idx}.json')
         info = {
-            'direction': int(self.last_info.direction),
+            'press_direction': int(self.last_info.press_direction),
             'screenshot_time': self.last_info.current_time,
         }
         os_utils.save_json(info, info_path)
