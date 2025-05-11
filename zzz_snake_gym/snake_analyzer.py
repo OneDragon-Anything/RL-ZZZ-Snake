@@ -74,6 +74,7 @@ class ZzzSnakeGameInfo:
         self.cal_reward_dis()
 
         self.current_in_boundary: bool = False  # 当前位置是否在边界上
+        self.is_away_boundary: bool = False  # 当前动作是否让蛇远离边界
         self.dis_to_boundary: int = ZzzSnakeGameInfo.INF_DIS  # 与边界的距离
         self.cal_boundary_dis()  # 计算边界相关的值
 
@@ -136,12 +137,25 @@ class ZzzSnakeGameInfo:
         else:
             self.dis_to_boundary = min(dis)
 
+        self.is_away_boundary = False
         if self.predict_head_pos[0] == 0 or self.predict_head_pos[0] == zzz_snake_gym.game_const.GRID_ROWS - 1:
             self.current_in_boundary = True
+            if not(self.predict_head_pos[1] == 0 or self.predict_head_pos[1] == zzz_snake_gym.game_const.GRID_COLS - 1):
+                if self.predict_head_pos[0] < 2 and self.effective_direction == 1:
+                    self.is_away_boundary = True
+                elif self.predict_head_pos[0] > game_const.GRID_ROWS - 3 and self.effective_direction == 0:
+                    self.is_away_boundary = True
         elif self.predict_head_pos[1] == 0 or self.predict_head_pos[1] == zzz_snake_gym.game_const.GRID_COLS - 1:
             self.current_in_boundary = True
+            if not (self.predict_head_pos[0] == 0 or self.predict_head_pos[0] == zzz_snake_gym.game_const.GRID_ROWS - 1):
+                if self.predict_head_pos[1] < 2 and self.effective_direction == 3:
+                    self.is_away_boundary = True
+                elif self.predict_head_pos[1] > game_const.GRID_COLS - 3 and self.effective_direction == 2:
+                    self.is_away_boundary = True
         else:
             self.current_in_boundary = False
+
+
 
     def cal_is_next_danger(self) -> bool:
         """
@@ -160,7 +174,17 @@ class ZzzSnakeGameInfo:
             return True
 
         # 该方向能走的格子最少
-        if self.effective_direction == int(np.argmin(self.can_go_cnt)):
+        min_can_go_cnt: int = 999
+        min_can_go_directions: list[int] = []
+        for direction in range(4):
+            if self.can_go_cnt[direction] < min_can_go_cnt:
+                min_can_go_cnt = self.can_go_cnt[direction]
+                min_can_go_directions.clear()
+                min_can_go_directions.append(direction)
+            elif self.can_go_cnt[direction]== min_can_go_cnt:
+                min_can_go_directions.append(direction)
+
+        if self.effective_direction in min_can_go_directions:
             return True
 
         return False
@@ -277,6 +301,22 @@ class ZzzSnakeGameInfo:
     def cal_is_next_reward(self) -> bool:
         return self.effective_direction is not None and self.press_direction == self.effective_direction and self.direction_reward[self.effective_direction]
 
+    def is_grid_reward(self, head_pos: tuple[int, int]) -> bool:
+        """
+        目标格子是否奖励
+        Args:
+            head_pos: 目标格子
+
+        Returns:
+            is_reward: 是否奖励
+        """
+        return game_utils.is_pos_in_grid(head_pos) and self.grid[head_pos[0], head_pos[1]] in [
+            game_const.GridType.YELLOW_CRYSTAL,
+            game_const.GridType.BLUE_DIAMOND,
+            game_const.GridType.GREEN_SPEED,
+            game_const.GridType.GOLD_STAR,
+        ]
+
 
 class ZzzSnakeAnalyzer:
 
@@ -293,7 +333,7 @@ class ZzzSnakeAnalyzer:
         """
         对当前画面进行分析 并更新上一帧的分析结果
 
-        平均22ms
+        平均18ms
         Args:
             screenshot: 整个游戏画面
             current_time: 截图时间
@@ -358,18 +398,19 @@ class ZzzSnakeAnalyzer:
         bomb_mask = cv2.bitwise_or(bomb_mask, bomb_mask_2)
         grey_stone_mask = grey_stone_future.result()
 
-        empty_future = thread_utils.submit(get_coordinate_by_mask_center, empty_mask, 2, 'avg', 125)
+        empty_future = thread_utils.submit(get_coordinate_by_mask_center, empty_mask, 10, 'max', 125)
         # own_head_future = thread_utils.submit(get_coordinate_by_mask_center, own_head_mask, 1, 'avg', 255)
         own_head_eye_future = thread_utils.submit(get_grid_coordinate_by_mask, own_head_eye_mask)
-        own_body_future = thread_utils.submit(get_coordinate_by_mask_center, own_body_mask, 2, 'avg', 255)
-        blue_head_future = thread_utils.submit(get_coordinate_by_mask_center, blue_head_mask, 2, 'max', 255)
-        blue_body_future = thread_utils.submit(get_coordinate_by_mask_center, blue_body_mask, 2, 'avg', 255)
-        purple_head_future = thread_utils.submit(get_coordinate_by_mask_center, purple_head_mask, 2, 'max', 255)
-        purple_body_future = thread_utils.submit(get_coordinate_by_mask_center, purple_body_mask, 2, 'avg', 255)
-        pink_head_future = thread_utils.submit(get_coordinate_by_mask_center, pink_head_mask, 2, 'max', 255)
-        pink_body_future = thread_utils.submit(get_coordinate_by_mask_center, pink_body_mask, 2, 'avg', 255)
-        gold_head_future = thread_utils.submit(get_coordinate_by_mask_center, gold_head_mask, 2, 'max', 255)
-        gold_body_future = thread_utils.submit(get_coordinate_by_mask_center, gold_body_mask, 2, 'avg', 255)
+        own_body_future = thread_utils.submit(get_coordinate_by_mask_center, own_body_mask, 10, 'max', 255)
+        blue_head_future = thread_utils.submit(get_coordinate_by_mask_center, blue_head_mask, 10, 'max', 255)
+        blue_body_future = thread_utils.submit(get_coordinate_by_mask_center, blue_body_mask, 10, 'max', 255)
+        purple_head_future = thread_utils.submit(get_coordinate_by_mask_center, purple_head_mask, 10, 'max', 255)
+        purple_body_future = thread_utils.submit(get_coordinate_by_mask_center, purple_body_mask, 10, 'max', 255)
+        pink_head_future = thread_utils.submit(get_coordinate_by_mask_center, pink_head_mask, 10, 'max', 255)
+        pink_body_future = thread_utils.submit(get_coordinate_by_mask_center, pink_body_mask, 10, 'max', 255)
+        gold_head_future = thread_utils.submit(get_coordinate_by_mask_center, gold_head_mask, 10, 'max', 255)
+        gold_body_future = thread_utils.submit(get_coordinate_by_mask_center, gold_body_mask, 10, 'max', 255)
+
         yellow_crystal_future = thread_utils.submit(get_coordinate_by_mask_center, yellow_crystal_mask, 2, 'avg', 125)
         green_speed_future = thread_utils.submit(get_coordinate_by_mask_center, green_speed_mask, 2, 'avg', 125)
         blue_diamond_future = thread_utils.submit(get_coordinate_by_mask_center, blue_diamond_mask, 2, 'avg', 125)
@@ -398,30 +439,60 @@ class ZzzSnakeAnalyzer:
 
         total_reward_cnt: int = len(yellow_crystal_list[0]) + len(green_speed_list[0]) + len(blue_diamond_list[0]) + len(gold_star_list[0])
 
-        hsv_head_pos = get_head_pos(own_head_eye_list)
+        # 初始化一个包含空格的网格
+        grid = np.full((game_const.GRID_ROWS, game_const.GRID_COLS), game_const.GridType.UNKNOWN, dtype=np.int8)
+        grid[empty_list[0], empty_list[1]] = game_const.GridType.EMPTY
+
+        # 使用空格预测头部
+        hsv_head_pos = get_head_pos(own_head_eye_list, grid)
         head_move_direction = get_head_move_direction(hsv_head_pos, last_info)
         predict_head_pos = get_predict_head_pos(hsv_head_pos, last_info, should_be_move=should_be_move)
 
-        grid, can_go_grid_list = make_grid(
-            last_info=last_info,
-            empty_list=empty_list,
-            head_pos=predict_head_pos,
-            own_body_list=own_body_list,
-            blue_head_list=blue_head_list,
-            blue_body_list=blue_body_list,
-            purple_head_list=purple_head_list,
-            purple_body_list=purple_body_list,
-            pink_head_list=pink_head_list,
-            pink_body_list=pink_body_list,
-            gold_head_list=gold_head_list,
-            gold_body_list=gold_body_list,
-            yellow_crystal_list=yellow_crystal_list,
-            green_speed_list=green_speed_list,
-            blue_diamond_list=blue_diamond_list,
-            gold_star_list=gold_star_list,
-            bomb_list=bomb_list,
-            grey_stone_list=grey_stone_list,
-        )
+        # 为了兼容识别错误情况 先设置奖励 再设置其他障碍 保证一定不会丢失障碍信息 生存优先
+        grid[yellow_crystal_list[0], yellow_crystal_list[1]] = game_const.GridType.YELLOW_CRYSTAL
+        grid[green_speed_list[0], green_speed_list[1]] = game_const.GridType.GREEN_SPEED
+        grid[blue_diamond_list[0], blue_diamond_list[1]] = game_const.GridType.BLUE_DIAMOND
+        grid[gold_star_list[0], gold_star_list[1]] = game_const.GridType.GOLD_STAR
+
+        grid[own_body_list[0], own_body_list[1]] = game_const.GridType.OWN_BODY
+
+        # body 包含了 head 需要先赋值body
+        grid[blue_body_list[0], blue_body_list[1]] = game_const.GridType.BLUE_BODY
+        grid[blue_head_list[0], blue_head_list[1]] = game_const.GridType.BLUE_HEAD
+        grid[purple_body_list[0], purple_body_list[1]] = game_const.GridType.PURPLE_BODY
+        grid[purple_head_list[0], purple_head_list[1]] = game_const.GridType.PURPLE_HEAD
+        grid[pink_body_list[0], pink_body_list[1]] = game_const.GridType.PINK_BODY
+        grid[pink_head_list[0], pink_head_list[1]] = game_const.GridType.PINK_HEAD
+        grid[gold_head_list[0], gold_head_list[1]] = game_const.GridType.GOLD_HEAD
+        grid[gold_body_list[0], gold_body_list[1]] = game_const.GridType.GOLD_BODY
+
+        grid[bomb_list[0], bomb_list[1]] = game_const.GridType.BOMB
+        grid[grey_stone_list[0], grey_stone_list[1]] = game_const.GridType.GREY_STONE
+
+        # 由于吃了无敌后会变色 会被误判成其他蛇 因此自己的蛇头需要最后在赋值
+        if predict_head_pos is not None:
+            grid[predict_head_pos[0]][predict_head_pos[1]] = game_const.GridType.OWN_HEAD
+
+        # 是否可到达
+        can_go_grid_list: list[NDArray[np.uint8]] = []
+        for direction in range(4):
+            can_go_grid_list.append(
+                cal_can_go_grid(
+                    last_info=last_info,
+                    grid=grid,
+                    head_pos=predict_head_pos,
+                    direction=direction,
+                    empty_list=empty_list,
+                    blue_head_list=blue_head_list,
+                    purple_head_list=purple_head_list,
+                    pink_head_list=pink_head_list,
+                    gold_head_list=gold_head_list,
+                    yellow_crystal_list=yellow_crystal_list,
+                    green_speed_list=green_speed_list,
+                    blue_diamond_list=blue_diamond_list,
+                    gold_star_list=gold_star_list,
+                )
+            )
 
         info = ZzzSnakeGameInfo(
             start_time=current_time if last_info is None else last_info.start_time,
@@ -551,25 +622,37 @@ def get_coordinate_in_grid_mask(mask: MatLike, lower: int = 255) -> list[tuple[i
     return [(int(y), int(x)) for x, y in zip(x_coords, y_coords)]
 
 
-def get_head_pos(own_head_list: tuple[list[int], list[int]]) -> tuple[int, int]:
+def get_head_pos(
+        own_head_list: tuple[list[int], list[int]],
+        grid: NDArray[np.uint8]
+) -> tuple[int, int]:
     """
-    根据识别到的头部坐标列表 选出现最多的坐标 作为真正的头部坐标
+    根据识别到的头部坐标列表 选出现真正的头部坐标
+    如果头部有多个坐标 选择包含空格区域的且出现最多的坐标
     Args:
         own_head_list: 识别到的头部坐标列表
+        grid: 网格信息 不包含自己的头部
 
     Returns:
-        head_pos: 出现最多的头部坐标
+        head_pos: 头部坐标
     """
-    # 先去重找到出现次数最多的蛇头坐标
-    head = None
-    head_pos_max_cnt: int = 0
     head_pos_map: dict[tuple[int, int], int] = {}
+    with_empty_grid: set[tuple[int, int]] = set()
     for y, x in zip(own_head_list[0], own_head_list[1]):
         pos = (int(y), int(x))
         head_pos_cnt = head_pos_map.get(pos, 0) + 1
         head_pos_map[pos] = head_pos_cnt
-        if head_pos_cnt > head_pos_max_cnt:
+        if grid[pos[0], pos[1]] == game_const.GridType.EMPTY:
+            with_empty_grid.add(pos)
+
+    head = None
+    head_pos_max_cnt: int = 0
+    for pos, cnt in head_pos_map.items():
+        if len(with_empty_grid) > 0 and pos not in with_empty_grid:
+            continue
+        if cnt > head_pos_max_cnt:
             head = pos
+            head_pos_max_cnt = cnt
 
     return head
 
@@ -631,79 +714,6 @@ def get_head_move_direction(
             return 0
 
     return -1
-
-def make_grid(
-        last_info: ZzzSnakeGameInfo,
-        empty_list: tuple[list[int], list[int]],
-        head_pos: tuple[int, int],
-        own_body_list: tuple[list[int], list[int]],
-        blue_head_list: tuple[list[int], list[int]],
-        blue_body_list: tuple[list[int], list[int]],
-        purple_head_list: tuple[list[int], list[int]],
-        purple_body_list: tuple[list[int], list[int]],
-        pink_head_list: tuple[list[int], list[int]],
-        pink_body_list: tuple[list[int], list[int]],
-        gold_head_list: tuple[list[int], list[int]],
-        gold_body_list: tuple[list[int], list[int]],
-        yellow_crystal_list: tuple[list[int], list[int]],
-        green_speed_list: tuple[list[int], list[int]],
-        blue_diamond_list: tuple[list[int], list[int]],
-        gold_star_list: tuple[list[int], list[int]],
-        bomb_list: tuple[list[int], list[int]],
-        grey_stone_list: tuple[list[int], list[int]],
-) -> NDArray[np.uint8]:
-    grid = np.full((game_const.GRID_ROWS, game_const.GRID_COLS),
-                   game_const.GridType.UNKNOWN, dtype=np.int8)
-
-    grid[empty_list[0], empty_list[1]] = game_const.GridType.EMPTY
-
-    # 为了兼容识别错误情况 先设置奖励 再设置其他障碍 保证一定不会丢失障碍信息 生存优先
-    grid[yellow_crystal_list[0], yellow_crystal_list[1]] = game_const.GridType.YELLOW_CRYSTAL
-    grid[green_speed_list[0], green_speed_list[1]] = game_const.GridType.GREEN_SPEED
-    grid[blue_diamond_list[0], blue_diamond_list[1]] = game_const.GridType.BLUE_DIAMOND
-    grid[gold_star_list[0], gold_star_list[1]] = game_const.GridType.GOLD_STAR
-
-    grid[own_body_list[0], own_body_list[1]] = game_const.GridType.OWN_BODY
-
-    # body 包含了 head 需要先赋值body
-    grid[blue_body_list[0], blue_body_list[1]] = game_const.GridType.BLUE_BODY
-    grid[blue_head_list[0], blue_head_list[1]] = game_const.GridType.BLUE_HEAD
-    grid[purple_body_list[0], purple_body_list[1]] = game_const.GridType.PURPLE_BODY
-    grid[purple_head_list[0], purple_head_list[1]] = game_const.GridType.PURPLE_HEAD
-    grid[pink_body_list[0], pink_body_list[1]] = game_const.GridType.PINK_BODY
-    grid[pink_head_list[0], pink_head_list[1]] = game_const.GridType.PINK_HEAD
-    grid[gold_head_list[0], gold_head_list[1]] = game_const.GridType.GOLD_HEAD
-    grid[gold_body_list[0], gold_body_list[1]] = game_const.GridType.GOLD_BODY
-
-    grid[bomb_list[0], bomb_list[1]] = game_const.GridType.BOMB
-    grid[grey_stone_list[0], grey_stone_list[1]] = game_const.GridType.GREY_STONE
-
-    # 由于吃了无敌后会变色 会被误判成其他蛇 因此自己的蛇头需要最后在赋值
-    if head_pos is not None:
-        grid[head_pos[0]][head_pos[1]] = game_const.GridType.OWN_HEAD
-
-    # 是否可到达
-    can_go_grid_list: list[NDArray[np.uint8]] = []
-    for direction in range(4):
-        can_go_grid_list.append(
-            cal_can_go_grid(
-                last_info=last_info,
-                grid=grid,
-                head_pos=head_pos,
-                direction=direction,
-                empty_list=empty_list,
-                blue_head_list=blue_head_list,
-                purple_head_list=purple_head_list,
-                pink_head_list=pink_head_list,
-                gold_head_list=gold_head_list,
-                yellow_crystal_list=yellow_crystal_list,
-                green_speed_list=green_speed_list,
-                blue_diamond_list=blue_diamond_list,
-                gold_star_list=gold_star_list,
-            )
-        )
-
-    return grid, can_go_grid_list
 
 
 def cal_can_go_grid(
@@ -881,10 +891,11 @@ def __debug_analyse():
     analyzer = ZzzSnakeAnalyzer((original_width // scale, original_height // scale))
     from zzz_snake_gym import cv2_utils
     from zzz_snake_gym import debug_utils
-    screenshot = debug_utils.get_debug_image('wrong')
+    screenshot = debug_utils.get_debug_image('_1745146637092')
     import time
     start_time = time.time()
-    result = analyzer.analyse(screenshot, time.time(), None, should_be_move=True)
+    for _ in range(100):
+        result = analyzer.analyse(screenshot, time.time(), None, should_be_move=True)
     print(time.time() - start_time)
 
     cv2_utils.show_image(result.game_part, win_name='game_part')

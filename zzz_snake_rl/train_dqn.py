@@ -1,11 +1,15 @@
 import os
-from typing import Callable
+from typing import Callable, Dict
 
 import gymnasium as gym
+import torch
+import torch.nn as nn
 from dotenv import load_dotenv
+from gymnasium import spaces
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import CheckpointCallback
 from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.utils import get_linear_fn
 from stable_baselines3.common.vec_env import VecFrameStack, SubprocVecEnv
 
@@ -66,6 +70,9 @@ def train():
             model.exploration_final_eps,
             model.exploration_fraction,
         )
+        model.target_update_interval = 5000
+        model.learning_rate = 5e-5
+        model._setup_lr_schedule()
     else:
         print('重新开始')
         # 创建模型
@@ -86,7 +93,7 @@ def train():
         callback=[
             checkpoint_callback,
         ],
-
+        # progress_bar=True,
     )
 
     # 保存最终模型

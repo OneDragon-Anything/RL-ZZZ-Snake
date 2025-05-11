@@ -123,16 +123,18 @@ class ZzzSnakeEnv(gym.Env):
         #     reward += info.score - self.last_info.score  # 使用分数差来做奖励
 
         # 本次操作不生效
-        # if self.last_info.press_direction != self.last_info.effective_direction:
-        #     reward -= 0.5
+        if self.last_info.press_direction != self.last_info.effective_direction:
+            reward -= 0.5
 
-        # 前往危险的格子要扣分 边界/障碍
         if self.last_info.is_next_danger:
-            # print('危险扣分')
+            # 前往危险的格子要扣分 边界/障碍
             reward -= 1
+        elif self.last_info.is_away_boundary:
+            # 远离边界要加分
+            reward += 0.3
 
         if (not self.last_info.is_next_danger
-                and self.last_info.is_next_reward):
+                and self.last_info.is_grid_reward(info.predict_head_pos)):
             # 上一帧不危险 预估到达食物 要加分
             reward += 1
         elif (not self.last_info.is_next_danger
@@ -145,8 +147,8 @@ class ZzzSnakeEnv(gym.Env):
               and self.last_info.dis_to_reward < info.dis_to_reward
         ):
             # 上上一帧不危险 远离奖励 要扣分
-            # 越靠近奖励 扣分越多
-            reward -= max(0.3 - self.last_info.dis_to_reward * 0.05, 0.05)
+            # 越远离奖励 扣分越多
+            reward -= min((info.dis_to_reward - self.last_info.dis_to_reward * 0.05), 0.6)
 
         # 保证范围
         if reward < -1:
@@ -185,8 +187,6 @@ class ZzzSnakeEnv(gym.Env):
 
         game_part = cv2.resize(info.game_part, self.target_size, interpolation=cv2.INTER_AREA)
         mask_shape = game_part.shape[:2]
-
-
 
         return {
             'image': np.concatenate([
@@ -299,8 +299,8 @@ class ZzzSnakeEnv(gym.Env):
             if info.game_over:
                 break
 
-            self.screen_capturer.active_window()
-            time.sleep(0.01)
+            # self.screen_capturer.active_window()
+            # time.sleep(0.01)
 
         # 蛇死的时候 整条蛇会从蛇头开始到蛇尾消失。因此在结束的时候会看到坐标漂移
         # if info.head is not None and self.last_info.head is not None:
@@ -467,7 +467,7 @@ def __debug_get_obs():
     env = ZzzSnakeEnv()
     from zzz_snake_gym import debug_utils
     screenshot = debug_utils.get_debug_image('_1745150194431')
-    info = env.analyzer.analyse(screenshot, time.time(), None)
+    info = env.analyzer.analyse(screenshot, time.time(), None, should_be_move=True)
     start_time = time.time()
     for _ in range(100):
         obs = env.get_obs(info)
